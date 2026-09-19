@@ -7,13 +7,14 @@ import numpy as np
 import random
 
 from HyperParams import HyperParams
+from ReplayBuffer import ReplayBuffer
 
 class DQNTrainer:
     def __init__(self, 
                  hyperparams: HyperParams, 
                  target_network: nn.Module, 
                  main_network: nn.Module, 
-                 r_buffer,
+                 r_buffer: ReplayBuffer,
                  env_name: str,  
                  env_config = None,
                  use_gpu = False):
@@ -86,22 +87,17 @@ class DQNTrainer:
           nb_steps = 0
           while not done:
             action = self.b_policy(state)
-            new_state, reward, term, trunc, _ = env.step(action)
+            new_state, reward, term, trunc, _ = self.env.step(action)
             episode_return += reward
             done = term | trunc
             nb_steps += 1
-            self.r_buffer.append((state, action, reward, new_state, done))
+            self.r_buffer.push((state, action, reward, new_state, done))
             if len(self.r_buffer) >= self.hyperparams.warmup_size:
               # uniform draw of a batch
               shuffled_idx = np.random.choice(np.arange(len(self.r_buffer)), size=self.batch_size, replace=False)
               batch = [self.r_buffer[i] for i in shuffled_idx]
               # extract components
-              # /!\ This part is too inefficient and lowers the performance a lot
-              states = torch.tensor(np.array([r[0] for r in batch])).flatten(start_dim=1) # flatten from (5, 5) to (25,)
-              actions = torch.tensor(np.array([r[1] for r in batch]))
-              rewards = torch.tensor(np.array([r[2] for r in batch]), device=self.device, dtype=torch.float32)
-              next_states = torch.tensor(np.array([r[3] for r in batch])).flatten(start_dim=1) # flatten from (5, 5) to (25,)
-              dones = torch.tensor(np.array([r[4] for r in batch]), device=self.device, dtype=torch.float32) # convert to float to make operation (1-dones) possible
+              states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
               qvalues = self.getMaxQTarget(next_states)
               # rewards, dones and qvalues should all be on same device
