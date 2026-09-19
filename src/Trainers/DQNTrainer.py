@@ -76,6 +76,18 @@ class DQNTrainer:
             return maxQValues
 
     def trainLoop(self, save_file="targetNetwork.pt", stats_logfile=""):
+        """
+        1. Generate action using behaviour policy (policy => Agent should be independent from Trainer)
+        2. Step env
+        3. push to replay buffer (replay buffer is independent from Trainer)
+        4. Draw of a batch (using replay buffer method)
+        5. Calc y_target (Same calcul for all Trainers)
+        6. Use trainer specific method to generate input to give to main network
+        7. Calculate the loss y_target, y_main using the Trainer main network loss fn (common to all Trainers)
+        8. Optimize main network (common)
+        9. Regular target weight update (common)
+        10. Final save (common)
+        """
         losses = []
         episode_returns = []
         epsilons = []
@@ -94,9 +106,6 @@ class DQNTrainer:
             self.r_buffer.push((state, action, reward, new_state, done))
             if len(self.r_buffer) >= self.hyperparams.warmup_size:
               # uniform draw of a batch
-              shuffled_idx = np.random.choice(np.arange(len(self.r_buffer)), size=self.batch_size, replace=False)
-              batch = [self.r_buffer[i] for i in shuffled_idx]
-              # extract components
               states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
               qvalues = self.getMaxQTarget(next_states)
