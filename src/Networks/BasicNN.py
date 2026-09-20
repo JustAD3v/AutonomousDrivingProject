@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class BasicNetwork(nn.Module):
+class BasicNN(nn.Module):
   def __init__(self, in_features=30, h1=64, h2=64, out_features=1):
     # init internal pytorch nn.Module parent class
     super().__init__()

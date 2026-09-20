@@ -3,13 +3,13 @@ class TrainConfig:
         self.gamma = 0.95 # reward discount
         self.epsilon_start = 1.0
         self.epsilon = self.epsilon_start
-        self.epislon_decay = 0.994
+        self.epsilon_decay = 0.994
         self.epsilon_min = 0.01
         self.buffer_size = 5000
         self.warmup_size = 800
         self.batch_size = 64
         self.update_freq = 800
-        self.nb_epidodes = 500
+        self.nb_episodes = 500
 
 class TrainConfigBuilder:
     def __init__(self):
@@ -24,7 +24,7 @@ class TrainConfigBuilder:
         return self
     
     def epsilon_decay(self, value):
-        self._config.epislon_decay = value;
+        self._config.epsilon_decay = value;
         return self
     
     def epsilon_min(self, value):
@@ -44,7 +44,7 @@ class TrainConfigBuilder:
         return self
     
     def nb_episodes(self, value):
-        self._config.nb_epidodes = value;
+        self._config.nb_episodes = value;
         return self
 
     def buffer_size(self, value):
