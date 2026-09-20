@@ -6,55 +6,47 @@ import highway_env
 import numpy as np
 import random
 
-from HyperParams import HyperParams
+from Trainers.TrainConfig import TrainConfig
 from ReplayBuffer import ReplayBuffer
+from Agents.AbstractAgent import Agent 
 
 class DQNTrainer:
     def __init__(self, 
-                 hyperparams: HyperParams, 
-                 target_network: nn.Module, 
+                 config: TrainConfig, 
+                 target_network: nn.Module,
                  main_network: nn.Module, 
-                 r_buffer: ReplayBuffer,
+                 agent: Agent, 
                  env_name: str,  
                  env_config = None,
                  use_gpu = False):
         self.env = gym.make(env_name, config=env_config)
-        self.hyperparams = hyperparams
-        self.r_buffer = r_buffer
-        self.target_net = target_network
+        self.config = config
+        self.agent = agent
         self.main_net = main_network
+        self.target_net = target_network
         self.target_network.load_state_dict(self.main_net.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
+        self.r_buffer = ReplayBuffer(config.buffer_size, 
+                                             config.batch_size,
+                                             config.warmup_size,
+                                             self.device)
 
     def optimize_main(self, loss):
         """ Method to optimize the main networks weights given the loss """
-        self.mainNet.optimizer.zero_grad()
+        self.main_net.optimizer.zero_grad()
         loss.backward()
-        self.mainNet.optimizer.step()
-
-    def b_policy(self, state): 
-        if random.uniform(0,1) < self.hyperparams.epsilon:
-            return self.env.action_space.sample()
-        else:
-            return self.getArgMaxQMain(state)
+        self.main_net.optimizer.step()
 
     def one_hot(x):
         l = [0.0,0.0,0.0,0.0,0.0]
         l[x] = 1.0
         return l
 
-    def getArgMaxQMain(self, state):
-        with torch.no_grad():
-            state_t = torch.FloatTensor(np.ravel(state)) # (25,)
-            # unsqueeze and expand to have => (5, 25)
-            state_t_exp = torch.unsqueeze(state_t, 0).expand(5, 25)
-            # append actions => (5,5) + (5, 25) => (5, 30)
-            actions = torch.tensor([self.one_hot(x) for x in range(self.env.action_space.n)])
-            input_tensor = torch.cat((state_t_exp,actions), dim=1)
-            # get qvalues from model
-            qvalues = self.mainNet.forward(input_tensor.to(self.device)) # out => (5,)
-            return torch.argmax(qvalues).item()
-
+    """ 
+    TODO: 
+    Move reshaping out of this method
+    Trainer should not depend on a Network specific encoding       
+    """
     def getMaxQTarget(self, states):
         with torch.no_grad():
             batchsize = len(states) # batchsize = B
@@ -76,59 +68,45 @@ class DQNTrainer:
             return maxQValues
 
     def trainLoop(self, save_file="targetNetwork.pt", stats_logfile=""):
-        """
-        1. Generate action using behaviour policy (policy => Agent should be independent from Trainer)
-        2. Step env
-        3. push to replay buffer (replay buffer is independent from Trainer)
-        4. Draw of a batch (using replay buffer method)
-        5. Calc y_target (Same calcul for all Trainers)
-        6. Use trainer specific method to generate input to give to main network
-        7. Calculate the loss y_target, y_main using the Trainer main network loss fn (common to all Trainers)
-        8. Optimize main network (common)
-        9. Regular target weight update (common)
-        10. Final save (common)
-        """
         losses = []
         episode_returns = []
         epsilons = []
-        for _ in range(self.hyperparams.nb_episode):
+        for _ in range(self.config.nb_episode):
           state, info = self.env.reset()
           done = False
           total_loss = 0
           episode_return = 0
           nb_steps = 0
           while not done:
-            action = self.b_policy(state)
+            action = self.agent.policy(state)
             new_state, reward, term, trunc, _ = self.env.step(action)
             episode_return += reward
             done = term | trunc
             nb_steps += 1
             self.r_buffer.push((state, action, reward, new_state, done))
-            if len(self.r_buffer) >= self.hyperparams.warmup_size:
+            if self.r_buffer.warmed_up:
               # uniform draw of a batch
               states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
               qvalues = self.getMaxQTarget(next_states)
               # rewards, dones and qvalues should all be on same device
-              y_target = rewards + self.hyperparams.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
-              # calc y_main using MAIN NETWORK
-              one_hot_actions = torch.tensor([self.one_hot(x) for x in actions]) # (B,5)
-              batch_input = torch.cat((states, one_hot_actions), dim=1) # turn states = (B, 25) to => (B, 30)
-              y_main = self.mainNet.forward(batch_input.to(self.device))
+              y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+              # calc y_main using MAIN NETWORK (network of the agent)
+              y_main = self.agent.process_batch((states, actions, rewards, next_states, dones)) 
               # calc loss
-              loss = self.mainNet.loss_fn(y_main.squeeze(), y_target)
+              loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
               total_loss += loss.item()
               # optimize
               self.optimize_main(loss)
-              if iteration % self.hyperparams.update_freq == 0:
-                # copy mainNet weights to targetNet
-                self.targetNet.load_state_dict(self.mainNet.state_dict())
+              if iteration % self.config.update_freq == 0:
+                # copy main_net weights to targetNet
+                self.targetNet.load_state_dict(self.main_net.state_dict())
                 print("[!!] Weights of Target Network updated !")
             iteration += 1
             state = new_state
         
-          print(f"episode {episode_count}/{self.hyperparams.nb_episode} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={epsilon}, warmup_done = {len(r_buffer) >= warmup_size}")
-          epsilon = max(self.hyperparams.epsilon_min, epsilon*self.hyperparams.epsilon_decay)
+          print(f"episode {episode_count}/{self.config.nb_episode} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={epsilon}, warmup_done = {len(r_buffer) >= warmup_size}")
+          epsilon = max(self.config.epsilon_min, epsilon*self.config.epsilon_decay)
           episode_count += 1
           losses.append(total_loss/nb_steps)
           episode_returns.append(episode_return)
@@ -137,4 +115,4 @@ class DQNTrainer:
         print("[+] Training finished !")
 
         # TODO: implement conditional saving
-        torch.save(self.hyperparams.targetNet.state_dict(), save_file)
+        torch.save(self.config.targetNet.state_dict(), save_file)
