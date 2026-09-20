@@ -2,28 +2,16 @@ from abc import ABC, abstractmethod
 
 class Agent(ABC):
     def __init__(self):
-        super().__init__()
+        self.env = None
+        self.model = None
+        self.config = None
+        self.device = None
 
-    def init_agent(self, env, model, params, device):
+    def init_agent(self, env, model, config, device):
         self.env = env
         self.model = model
-        self.params = params
+        self.config = config
         self.device = device
-
-    @property
-    @abstractmethod
-    def env(self):
-        pass
-
-    @property
-    @abstractmethod
-    def params(self):
-        pass
-
-    @property
-    @abstractmethod
-    def model(self):
-        pass
 
     @abstractmethod
     def policy(self):

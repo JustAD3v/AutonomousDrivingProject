@@ -1,23 +1,11 @@
-from AbstractAgent import Agent
+from Agents.AbstractAgent import Agent
 import random
 import torch
 import numpy as np
 
 class LearningAgent(Agent):
-    def __init__(self, device):
-        super().__init__(device)
-
-    @property
-    def env(self):
-        return self.env
-
-    @property
-    def config(self):
-        return self.config 
-
-    @property
-    def model(self):
-        return self.model
+    def __init__(self):
+        pass
 
     def policy(self, state):
         """ Epsilon greedy policy """
@@ -46,7 +34,7 @@ class LearningAgent(Agent):
         # calling model(...) instead of model.forward(..) works and is better because we named it forward
         return self.model(batch_input.to(self.device))
 
-    def one_hot(x):
+    def one_hot(self, x):
         l = [0.0,0.0,0.0,0.0,0.0]
         l[x] = 1.0
         return l
