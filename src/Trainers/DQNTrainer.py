@@ -3,12 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
-import numpy as np
-import random
 
 from Trainers.TrainConfig import TrainConfig
 from ReplayBuffer import ReplayBuffer
-from Agents.AbstractAgent import Agent 
+from Agents.AbstractAgent import Agent
+from TrainResult import TrainResult
 
 class DQNTrainer:
     def __init__(self, 
@@ -30,6 +29,7 @@ class DQNTrainer:
                                              config.batch_size,
                                              config.warmup_size,
                                              self.device)
+        self.record = TrainResult()
 
     def optimize_main(self, loss):
         """ Method to optimize the main networks weights given the loss """
@@ -68,11 +68,9 @@ class DQNTrainer:
             return maxQValues
 
     def trainLoop(self, save_file="targetNetwork.pt", stats_logfile=""):
-        losses = []
-        episode_returns = []
-        epsilons = []
+        epsilon = self.config.epsilon_start
         for _ in range(self.config.nb_episode):
-          state, info = self.env.reset()
+          state, _ = self.env.reset()
           done = False
           total_loss = 0
           episode_return = 0
@@ -108,11 +106,13 @@ class DQNTrainer:
           print(f"episode {episode_count}/{self.config.nb_episode} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={epsilon}, warmup_done = {len(r_buffer) >= warmup_size}")
           epsilon = max(self.config.epsilon_min, epsilon*self.config.epsilon_decay)
           episode_count += 1
-          losses.append(total_loss/nb_steps)
-          episode_returns.append(episode_return)
-          epsilons.append(epsilon)
+          self.record.add_loss(total_loss/nb_steps)
+          self.record.add_episode_return(episode_return)
+          self.record.add_epsilon(epsilon)
     
         print("[+] Training finished !")
 
         # TODO: implement conditional saving
         torch.save(self.config.targetNet.state_dict(), save_file)
+        return self.record
+    

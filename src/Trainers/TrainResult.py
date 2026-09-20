@@ -9,6 +9,15 @@ class TrainResult:
         self.episode_lengths = []
         self.losses = []
 
+    def add_loss(self, value):
+        self.losses.append(value)
+    
+    def add_epsilon(self, value):
+        self.epsilons.append(value)
+
+    def add_episode_return(self, value):
+        self.episode_returns.append(value)
+
     def plot(self):
         x = range(self.nb_episode)
         plt.plot(x, self.losses, label="Loss", color="red")

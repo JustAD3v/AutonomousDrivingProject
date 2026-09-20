@@ -12,8 +12,8 @@ class LearningAgent(Agent):
         return self.env
 
     @property
-    def params(self):
-        return self.params 
+    def config(self):
+        return self.config 
 
     @property
     def model(self):
@@ -21,19 +21,12 @@ class LearningAgent(Agent):
 
     def policy(self, state):
         """ Epsilon greedy policy """
-        if random.uniform(0,1) < self.params.epsilon:
+        if random.uniform(0,1) < self.config.epsilon:
               return self.env.action_space.sample()
         else:
-            return self.getArgMaxQMain(state)
+            return self.getArgMaxQPolicy(state)
 
-    def process_batch(self, batch_tuple):
-        states, actions, _, _, _ = batch_tuple
-        one_hot_actions = torch.tensor([self.one_hot(x) for x in actions]) # (B,5)
-        batch_input = torch.cat((states, one_hot_actions), dim=1) # turn states = (B, 25) to => (B, 30)
-        # calling model(...) instead of model.forward(..) works and is better because we named it forward
-        return self.model(batch_input.to(self.device))
-
-    def getArgMaxQMain(self, state):
+    def getArgMaxQPolicy(self, state):
         with torch.no_grad():
             state_t = torch.FloatTensor(np.ravel(state)) # (25,)
             # unsqueeze and expand to have => (5, 25)
@@ -45,6 +38,13 @@ class LearningAgent(Agent):
             # calling model(...) instead of model.forward(..) works and is better because we named it forward
             qvalues = self.model(input_tensor.to(self.device)) # out => (5,)
             return torch.argmax(qvalues).item()
+
+    def process_batch(self, batch_tuple):
+        states, actions, _, _, _ = batch_tuple
+        one_hot_actions = torch.tensor([self.one_hot(x) for x in actions]) # (B,5)
+        batch_input = torch.cat((states, one_hot_actions), dim=1) # turn states = (B, 25) to => (B, 30)
+        # calling model(...) instead of model.forward(..) works and is better because we named it forward
+        return self.model(batch_input.to(self.device))
 
     def one_hot(x):
         l = [0.0,0.0,0.0,0.0,0.0]
