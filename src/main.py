@@ -32,7 +32,6 @@ env_config = {
 
 train_config = (
     TrainConfigBuilder()
-    .warmup_size(100)
     .build()
 )
 agent = LearningAgent()
