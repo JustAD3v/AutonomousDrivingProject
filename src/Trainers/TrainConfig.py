@@ -21,6 +21,7 @@ class TrainConfigBuilder:
 
     def epsilon_start(self, value):
         self._config.epsilon_start = value;
+        self._config.epsilon = self._config.epsilon_start
         return self
     
     def epsilon_decay(self, value):

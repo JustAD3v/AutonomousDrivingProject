@@ -40,7 +40,8 @@ target_network = BasicNN()
 trainer = DQNTrainer(train_config,
                      target_network,
                      main_network,
-                     agent)
+                     agent,
+                     env_config=env_config)
 
 results = trainer.trainLoop()
 

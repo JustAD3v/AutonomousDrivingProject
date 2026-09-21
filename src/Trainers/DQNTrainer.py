@@ -72,7 +72,7 @@ class DQNTrainer:
             maxQValues = torch.max(qvalues, dim=1).values
             return maxQValues
 
-    def trainLoop(self, save_file="targetNetwork.pt", stats_logfile="") -> TrainResult:
+    def trainLoop(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
         """ Warm up """
         print("[+] === Warm up starts ===")
         warmup_samples = 0
@@ -135,6 +135,6 @@ class DQNTrainer:
         print(f"[+] Training finished ! Target network saved to file : {save_file}")
 
         # TODO: implement conditional saving
-        torch.save(self.config.target_net.state_dict(), save_file)
+        torch.save(self.target_net.state_dict(), save_file)
         return self.record
     

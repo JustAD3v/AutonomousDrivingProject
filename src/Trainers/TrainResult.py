@@ -19,7 +19,7 @@ class TrainResult:
         self.episode_returns.append(value)
 
     def plot(self):
-        x = range(self.nb_episode)
+        x = range(self.nb_episodes)
         plt.plot(x, self.losses, label="Loss", color="red")
         plt.plot(x, self.epsilons, label="Epsilon", color="green")
         plt.plot(x, self.episode_returns, label="Return", color="blue")
