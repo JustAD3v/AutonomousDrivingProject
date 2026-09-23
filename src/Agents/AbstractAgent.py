@@ -16,8 +16,3 @@ class Agent(ABC):
     @abstractmethod
     def policy(self):
         pass
-
-    @abstractmethod
-    def process_batch(self, batch):
-        pass
-

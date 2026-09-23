@@ -4,7 +4,7 @@ from Trainers.DQNTrainer import DQNTrainer
 from Trainers.TrainConfig import TrainConfigBuilder
 from Evaluator.Evaluator import Evaluator 
 from Agents.LearningAgent import LearningAgent
-from Agents.OptimalAgent import OptimalAgent
+from Agents.GreedyAgent import GreedyAgent
 from Networks.BasicNN import BasicNN
 
 env_config = {
@@ -35,7 +35,7 @@ env_config = {
 }
 
 # Change this variable to switch between Training phase and Evaluation phase 
-TRAIN = False
+TRAIN = True
 
 train_config = (
     TrainConfigBuilder()
@@ -66,11 +66,15 @@ if TRAIN:
     results.plot()
 
 else:
-    agent = OptimalAgent()
+    agent = GreedyAgent()
     model = BasicNN()
     model.load_state_dict(torch.load('./models/targetNetwork2_70.pt'))
+    eval_config = {
+        ** env_config,
+        "vehicles_density": 1.5
+    }
     evaluator = Evaluator(agent,
                           model,
                           nb_episodes=50,
-                          env_config=env_config)
+                          env_config=eval_config)
     evaluator.eval()

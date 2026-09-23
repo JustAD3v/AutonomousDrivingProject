@@ -41,37 +41,6 @@ class DQNTrainer:
         loss.backward()
         self.main_net.optimizer.step()
 
-    def one_hot(self, x):
-        l = [0.0,0.0,0.0,0.0,0.0]
-        l[x] = 1.0
-        return l
-
-    """ 
-    TODO: 
-    Move reshaping out of this method
-    Trainer should not depend on a Network specific encoding       
-    """
-    def getMaxQTarget(self, states):
-        with torch.no_grad():
-            batchsize = len(states) # batchsize = B
-            nb_actions = self.env.action_space.n # 5
-            # prepare actions => (5,5) => (B,5,5)
-            actions = torch.tensor([self.one_hot(x) for x in range(self.env.action_space.n)]).expand(batchsize,nb_actions,nb_actions)
-            # reshape to have the states repeated for every possible action a => (B, 1, 25) => (B, 5, 25)
-            states = torch.unsqueeze(states, 1).expand(batchsize, nb_actions, 25)
-            # add actions to every state vector => (B, 5, 5) + (B, 5, 25) = (B, 5, 30)
-            input_t = torch.cat((states, actions), dim=2)
-            # turn it into a matrix usable as input to the network => (B*5, 30) [Network takes (30,) as input]
-            input_t = torch.flatten(input_t, start_dim=0, end_dim=1)
-            # process all the inputs in one batch, doing only one forward call 
-            # forward is done internally by calling target_net(...) because we called the method "forward"
-            qvalues = self.target_net(input_t.to(self.device)) # (B*5,1)
-            # reshape to (B, 5)
-            qvalues = torch.reshape(qvalues, (batchsize, nb_actions))
-            # reduce the QValues to only the max among the 5 actions for every state => (B, 5) => (B,)
-            maxQValues = torch.max(qvalues, dim=1).values
-            return maxQValues
-
     def train(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
         """ Warm up """
         print("[+] === Warm up starts ===")
@@ -108,11 +77,11 @@ class DQNTrainer:
             # uniform draw of a batch
             states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
             # calc y_target for every sample of batch using TARGET NETWORK
-            qvalues = self.getMaxQTarget(next_states)
+            qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
             # rewards, dones and qvalues should all be on same device
             y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
             # calc y_main using MAIN NETWORK (network of the agent)
-            y_main = self.agent.process_batch((states, actions, rewards, next_states, dones)) 
+            y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
             # calc loss
             loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
             total_loss += loss.item()
