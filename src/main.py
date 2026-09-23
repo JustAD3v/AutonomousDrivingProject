@@ -6,6 +6,7 @@ from Evaluator.Evaluator import Evaluator
 from Agents.LearningAgent import LearningAgent
 from Agents.GreedyAgent import GreedyAgent
 from Networks.BasicNN import BasicNN
+from Networks.StateOnlyNN import StateOnlyNN 
 
 env_config = {
     "lanes_count": 4,
@@ -39,23 +40,26 @@ TRAIN = True
 
 train_config = (
     TrainConfigBuilder()
-    .epsilon_start(0.01)
-    .epsilon_decay(1.0) #0.997
+    .epsilon_start(1.0)
+    .epsilon_decay(0.997) #0.997
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
     .gamma(0.8)
     .update_freq(50)
-    .nb_episodes(250)
+    .nb_episodes(500)
     .build()
 )
 
 if TRAIN:
     agent = LearningAgent()
-    main_network = BasicNN()
+    # main_network = BasicNN()
+    main_network = StateOnlyNN()
+    target_network = StateOnlyNN()
+
     # too load an already trained model to train it more
     main_network.load_state_dict(torch.load('./models/targetNetwork2.pt'))
-    target_network = BasicNN()
+
     trainer = DQNTrainer(train_config,
                         target_network,
                         main_network,

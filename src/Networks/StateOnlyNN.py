@@ -26,7 +26,6 @@ class StateOnlyNN(nn.Module):
 
   def getMaxQ(self, states, nb_actions, device):
     with torch.no_grad():
-        print(states)
         # process all the inputs in one batch, doing only one forward call 
         # forward is done internally by calling self(...) because we called the method "forward"
         qvalues = self(states.to(device)) # (B, 5)
@@ -40,7 +39,10 @@ class StateOnlyNN(nn.Module):
       qvalues = self(state_t.to(device)) # out => (5,)
       return torch.argmax(qvalues).item()
   
-  def process_batch(self, batch_tuple):
+  def process_batch(self, batch_tuple, device):
     states, _, _, _, _ = batch_tuple
-    # calling model(...) instead of model.forward(..) works and is better because we named it forward
-    return self(states.to(self.device))
+    # calling self(...) instead of model.forward(..) works and is better because we named it forward
+    qvalues = self(states.to(device))
+    # qvalues are the 5 calculated q values for every state of the batch
+    # It must be trasnformed to a single action corresponding to max qvalue
+    return torch.max(qvalues, dim=1).values
