@@ -58,7 +58,7 @@ if TRAIN:
     target_network = StateOnlyNN()
 
     # too load an already trained model to train it more
-    main_network.load_state_dict(torch.load('./models/targetNetwork2.pt'))
+    # main_network.load_state_dict(torch.load('./models/targetNetwork.pt'))
 
     trainer = DQNTrainer(train_config,
                         target_network,
@@ -66,7 +66,7 @@ if TRAIN:
                         agent,
                         env_config=env_config)
 
-    results = trainer.train()
+    results = trainer.train(save_file="./models/targetNetwork_so.pt")
     results.plot()
 
 else:

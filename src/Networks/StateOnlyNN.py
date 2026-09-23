@@ -40,9 +40,11 @@ class StateOnlyNN(nn.Module):
       return torch.argmax(qvalues).item()
   
   def process_batch(self, batch_tuple, device):
-    states, _, _, _, _ = batch_tuple
+    states, actions, _, _, _ = batch_tuple
     # calling self(...) instead of model.forward(..) works and is better because we named it forward
-    qvalues = self(states.to(device))
-    # qvalues are the 5 calculated q values for every state of the batch
-    # It must be trasnformed to a single action corresponding to max qvalue
-    return torch.max(qvalues, dim=1).values
+    qvalues = self(states.to(device)) # => (B,5)
+    # Select Q(s, action_chosen)
+    actions = actions.to(device).long().unsqueeze(1) # => (B,1)
+    selected_qvalues = qvalues.gather(1, actions).squeeze(1) # gather => (B,1) => squeeze => (B,)
+
+    return selected_qvalues
