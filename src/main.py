@@ -1,6 +1,10 @@
+import torch
+
 from Trainers.DQNTrainer import DQNTrainer
 from Trainers.TrainConfig import TrainConfigBuilder
+from Evaluator.Evaluator import Evaluator 
 from Agents.LearningAgent import LearningAgent
+from Agents.OptimalAgent import OptimalAgent
 from Networks.BasicNN import BasicNN
 
 env_config = {
@@ -30,19 +34,43 @@ env_config = {
     "offscreen_rendering": None
 }
 
+# Change this variable to switch between Training phase and Evaluation phase 
+TRAIN = False
+
 train_config = (
     TrainConfigBuilder()
+    .epsilon_start(0.01)
+    .epsilon_decay(1.0) #0.997
+    .buffer_size(15000)
+    .warmup_size(400)
+    .batch_size(32)
+    .gamma(0.8)
+    .update_freq(50)
+    .nb_episodes(250)
     .build()
 )
-agent = LearningAgent()
-main_network = BasicNN()
-target_network = BasicNN()
-trainer = DQNTrainer(train_config,
-                     target_network,
-                     main_network,
-                     agent,
-                     env_config=env_config)
 
-results = trainer.trainLoop()
+if TRAIN:
+    agent = LearningAgent()
+    main_network = BasicNN()
+    # too load an already trained model to train it more
+    main_network.load_state_dict(torch.load('./models/targetNetwork2.pt'))
+    target_network = BasicNN()
+    trainer = DQNTrainer(train_config,
+                        target_network,
+                        main_network,
+                        agent,
+                        env_config=env_config)
 
-results.plot()
+    results = trainer.train()
+    results.plot()
+
+else:
+    agent = OptimalAgent()
+    model = BasicNN()
+    model.load_state_dict(torch.load('./models/targetNetwork2_70.pt'))
+    evaluator = Evaluator(agent,
+                          model,
+                          nb_episodes=50,
+                          env_config=env_config)
+    evaluator.eval()

@@ -72,7 +72,7 @@ class DQNTrainer:
             maxQValues = torch.max(qvalues, dim=1).values
             return maxQValues
 
-    def trainLoop(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
+    def train(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
         """ Warm up """
         print("[+] === Warm up starts ===")
         warmup_samples = 0
