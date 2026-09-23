@@ -28,8 +28,8 @@ class Evaluator:
     def eval(self):
         success = 0
         choices = [0 for i in range(self.env.action_space.n)]
-        episode_choices = [0 for i in range(self.env.action_space.n)]
         for i in range(self.nb_episodes):
+            episode_choices = [0 for i in range(self.env.action_space.n)]
             state, _ = self.env.reset()
             term = trunc = False
             while not (term | trunc):
