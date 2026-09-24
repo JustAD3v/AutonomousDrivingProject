@@ -38,7 +38,7 @@ from Networks.StateOnlyNN import StateOnlyNN
 fast_env_config = {
     "lanes_count": 4,
     "vehicles_count": 50,
-    "duration": 40,
+    "duration": 30,
     "ego_spacing": 2,
     "vehicles_density": 1.5,
     "collision_reward": -10,

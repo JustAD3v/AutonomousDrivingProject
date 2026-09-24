@@ -68,7 +68,7 @@ class DQNTrainer:
                  state = new_state
             print(f"buffer filled with : {warmup_samples}/{self.config.warmup_size}")
         warmup_duration = time.time()-start
-        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)})")
+        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
         """ Training """
         start = time.time()
         print("[+] === Training starts ===")
@@ -125,8 +125,8 @@ class DQNTrainer:
           self.record.register_episode_count(episode_count)
 
         training_duration = time.time()-start
-        print(f"[+] Training finished ! (Duration = {training_duration})\nTarget network saved to file : {save_file}")
-        print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}")
+        print(f"[+] Training finished ! (Duration = {training_duration}s)\nTarget network saved to file : {save_file}")
+        print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
         # TODO: implement conditional saving
         torch.save(self.target_net.state_dict(), save_file)
