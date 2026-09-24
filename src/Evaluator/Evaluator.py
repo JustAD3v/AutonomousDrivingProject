@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
+import time
 
 from Agents.AbstractAgent import Agent
 
@@ -12,6 +13,7 @@ class Evaluator:
                  model, 
                  nb_episodes, 
                  env_config, 
+                 render_delay=0.05,
                  use_gpu=False):
         self.agent = agent
         self.model = model
@@ -23,6 +25,7 @@ class Evaluator:
                               None,
                               self.device)
         self.action_labels = self.env.unwrapped.action_type.actions.values()
+        self.render_delay = render_delay
 
 
     def eval(self):
@@ -38,6 +41,7 @@ class Evaluator:
                 episode_choices[action] += 1
                 new_state, reward, term, trunc, _ = self.env.step(action)
                 state = new_state
+                time.sleep(self.render_delay)
             choices_dict = dict(zip(self.action_labels, episode_choices))
             if trunc:
               success += 1
