@@ -70,7 +70,7 @@ class DQNTrainer:
         print("[+] === Training starts ===")
         iteration = 0
         episode_count = 0
-        for _ in range(self.config.iterations):
+        while iteration < self.config.iterations:
           state, _ = self.env.reset()
           done = False
           total_loss = 0
@@ -91,19 +91,20 @@ class DQNTrainer:
                   done
                 )
               )
-            # uniform draw of a batch
-            states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
-            # calc y_target for every sample of batch using TARGET NETWORK
-            qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
-            # rewards, dones and qvalues should all be on same device
-            y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
-            # calc y_main using MAIN NETWORK (network of the agent)
-            y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
-            # calc loss
-            loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
-            total_loss += loss.item()
-            # optimize
-            self.optimize_main(loss)
+            if (iteration % self.config.train_freq == 0):
+              # uniform draw of a batch
+              states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
+              # calc y_target for every sample of batch using TARGET NETWORK
+              qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
+              # rewards, dones and qvalues should all be on same device
+              y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+              # calc y_main using MAIN NETWORK (network of the agent)
+              y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
+              # calc loss
+              loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
+              total_loss += loss.item()
+              # optimize
+              self.optimize_main(loss)
             if iteration % self.config.copy_freq == 0:
               # copy main_net weights to target_net
               self.target_net.load_state_dict(self.main_net.state_dict())
@@ -111,7 +112,7 @@ class DQNTrainer:
             iteration += 1
             state = new_state
         
-          print(f"episode {episode_count}/{self.config.iterations} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
+          print(f"[*] ({iteration}/{self.config.iterations}) | Episode finished (len={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
           self.config.epsilon = max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
           episode_count += 1
           self.record.add_loss(total_loss/nb_steps)

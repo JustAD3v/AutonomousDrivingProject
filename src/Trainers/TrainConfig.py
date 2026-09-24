@@ -9,6 +9,7 @@ class TrainConfig:
         self.warmup_size = 800
         self.batch_size = 64
         self.copy_freq = 800
+        self.train_freq = 1
         self.iterations = 500
 
 class TrainConfigBuilder:

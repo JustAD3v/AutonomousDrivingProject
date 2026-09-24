@@ -64,7 +64,8 @@ if TRAIN:
                         target_network,
                         main_network,
                         agent,
-                        env_config=env_config)
+                        env_name="highway-fast-v0",
+                        env_config=None)
 
     results = trainer.train(save_file="./models/targetNetwork_test.pt")
     results.plot()
