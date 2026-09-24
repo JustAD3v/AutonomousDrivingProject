@@ -118,6 +118,7 @@ class DQNTrainer:
           self.record.add_loss(total_loss/nb_steps)
           self.record.add_episode_return(episode_return)
           self.record.add_epsilon(self.config.epsilon)
+          self.record.register_episode_count(episode_count)
     
         print(f"[+] Training finished ! Target network saved to file : {save_file}")
 
