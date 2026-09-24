@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
 import numpy as np
+import time
 
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
@@ -44,6 +45,7 @@ class DQNTrainer:
 
     def train(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
         """ Warm up """
+        start = time.time()
         print("[+] === Warm up starts ===")
         warmup_samples = 0
         while warmup_samples < self.config.warmup_size:
@@ -65,8 +67,10 @@ class DQNTrainer:
                  warmup_samples += 1
                  state = new_state
             print(f"buffer filled with : {warmup_samples}/{self.config.warmup_size}")
-        print("[+] Warmup done !")
+        warmup_duration = time.time()-start
+        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)})")
         """ Training """
+        start = time.time()
         print("[+] === Training starts ===")
         iteration = 0
         episode_count = 0
@@ -119,8 +123,10 @@ class DQNTrainer:
           self.record.add_episode_return(episode_return)
           self.record.add_epsilon(self.config.epsilon)
           self.record.register_episode_count(episode_count)
-    
-        print(f"[+] Training finished ! Target network saved to file : {save_file}")
+
+        training_duration = time.time()-start
+        print(f"[+] Training finished ! (Duration = {training_duration})\nTarget network saved to file : {save_file}")
+        print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}")
 
         # TODO: implement conditional saving
         torch.save(self.target_net.state_dict(), save_file)
