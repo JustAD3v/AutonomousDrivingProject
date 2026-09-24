@@ -1,8 +1,8 @@
 from matplotlib import pyplot as plt
 
 class TrainResult:
-    def __init__(self, nb_episodes):
-        self.nb_episodes = nb_episodes
+    def __init__(self, iterations):
+        self.iterations = iterations
         self.epsilons = []
         self.total_loss = []
         self.episode_returns = []
@@ -19,10 +19,10 @@ class TrainResult:
         self.episode_returns.append(value)
 
     def plot(self):
-        x = range(self.nb_episodes)
+        x = range(self.iterations)
         plt.plot(x, self.losses, label="Loss", color="red")
         plt.plot(x, self.epsilons, label="Epsilon", color="green")
         plt.plot(x, self.episode_returns, label="Return", color="blue")
-        plt.xlabel("nb episodes")
+        plt.xlabel("nb iterations")
         plt.legend()
         plt.show()

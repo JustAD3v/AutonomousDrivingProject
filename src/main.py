@@ -31,7 +31,7 @@ env_config = {
     "centering_position": [0.3, 0.5],
     "scaling": 5.5,
     "show_trajectories": False,
-    "render_agent": True,
+    "render_agent": False,
     "offscreen_rendering": None
 }
 
@@ -45,9 +45,9 @@ train_config = (
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
-    .gamma(0.8)
-    .update_freq(50)
-    .nb_episodes(500)
+    .gamma(0.95)
+    .copy_freq(50)
+    .iterations(500)
     .build()
 )
 
@@ -58,7 +58,7 @@ if TRAIN:
     target_network = StateOnlyNN()
 
     # too load an already trained model to train it more
-    # main_network.load_state_dict(torch.load('./models/targetNetwork.pt'))
+    # main_network.load_state_dict(torch.load('./models/targetNetwork_so.pt'))
 
     trainer = DQNTrainer(train_config,
                         target_network,
@@ -66,13 +66,14 @@ if TRAIN:
                         agent,
                         env_config=env_config)
 
-    results = trainer.train(save_file="./models/targetNetwork_so.pt")
+    results = trainer.train(save_file="./models/targetNetwork_test.pt")
     results.plot()
 
 else:
     agent = GreedyAgent()
-    model = BasicNN()
-    model.load_state_dict(torch.load('./models/targetNetwork2_70.pt'))
+    # model = BasicNN()
+    model = StateOnlyNN()
+    model.load_state_dict(torch.load('./models/targetNetwork_so.pt'))
     eval_config = {
         ** env_config,
         "vehicles_density": 1.5

@@ -8,8 +8,8 @@ class TrainConfig:
         self.buffer_size = 5000
         self.warmup_size = 800
         self.batch_size = 64
-        self.update_freq = 800
-        self.nb_episodes = 500
+        self.copy_freq = 800
+        self.iterations = 500
 
 class TrainConfigBuilder:
     def __init__(self):
@@ -40,12 +40,12 @@ class TrainConfigBuilder:
         self._config.batch_size = value;
         return self
     
-    def update_freq(self, value):
-        self._config.update_freq = value;
+    def copy_freq(self, value):
+        self._config.copy_freq = value;
         return self
     
-    def nb_episodes(self, value):
-        self._config.nb_episodes = value;
+    def iterations(self, value):
+        self._config.iterations = value;
         return self
 
     def buffer_size(self, value):

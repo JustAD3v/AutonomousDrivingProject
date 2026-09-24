@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
+import numpy as np
 
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
@@ -29,7 +30,7 @@ class DQNTrainer:
                                              config.batch_size,
                                              config.warmup_size,
                                              self.device)
-        self.record = TrainResult(self.config.nb_episodes)
+        self.record = TrainResult(self.config.iterations)
         self.agent.init_agent(self.env, 
                               self.main_net,
                               self.config,
@@ -52,7 +53,15 @@ class DQNTrainer:
                  action = self.agent.policy(state)
                  new_state, reward, term, trunc, _ = self.env.step(action)
                  done = term | trunc
-                 self.r_buffer.push((state, action, reward, new_state, done))
+                 self.r_buffer.push(
+                   (
+                      np.asarray(state, dtype=np.float32).flatten(), # flatten only when storing
+                      action, 
+                      reward, 
+                      np.asarray(new_state, dtype=np.float32).flatten(), # flatten only when storing
+                      done
+                    )
+                  )
                  warmup_samples += 1
                  state = new_state
             print(f"buffer filled with : {warmup_samples}/{self.config.warmup_size}")
@@ -61,7 +70,7 @@ class DQNTrainer:
         print("[+] === Training starts ===")
         iteration = 0
         episode_count = 0
-        for _ in range(self.config.nb_episodes):
+        for _ in range(self.config.iterations):
           state, _ = self.env.reset()
           done = False
           total_loss = 0
@@ -73,7 +82,15 @@ class DQNTrainer:
             episode_return += reward
             done = term | trunc
             nb_steps += 1
-            self.r_buffer.push((state, action, reward, new_state, done))
+            self.r_buffer.push(
+               (
+                  np.asarray(state, dtype=np.float32).flatten(), # flatten only when storing
+                  action, 
+                  reward, 
+                  np.asarray(new_state, dtype=np.float32).flatten(), # flatten only when storing
+                  done
+                )
+              )
             # uniform draw of a batch
             states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
             # calc y_target for every sample of batch using TARGET NETWORK
@@ -87,14 +104,14 @@ class DQNTrainer:
             total_loss += loss.item()
             # optimize
             self.optimize_main(loss)
-            if iteration % self.config.update_freq == 0:
+            if iteration % self.config.copy_freq == 0:
               # copy main_net weights to target_net
               self.target_net.load_state_dict(self.main_net.state_dict())
               print("[!!] Weights of Target Network updated !")
             iteration += 1
             state = new_state
         
-          print(f"episode {episode_count}/{self.config.nb_episodes} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
+          print(f"episode {episode_count}/{self.config.iterations} finished (length={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
           self.config.epsilon = max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
           episode_count += 1
           self.record.add_loss(total_loss/nb_steps)
