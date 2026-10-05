@@ -1,5 +1,6 @@
 import torch
 import gymnasium as gym
+from stable_baselines3 import DQN
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainerFactory import TrainerFactory
@@ -24,8 +25,8 @@ fast_env_config = {
     "policy_frequency": 1,
 }
 
-TRAIN = True
-USE_CUSTOM = False
+TRAIN = False
+USE_CUSTOM = True
 
 train_config = (
     TrainConfigBuilder()
@@ -36,7 +37,7 @@ train_config = (
     .batch_size(32)
     .gamma(0.95)
     .copy_freq(50)
-    .iterations(30000)
+    .iterations(500)
     .learning_rate(5e-4)
     .train_freq(1)
     .gradient_steps(1)
@@ -65,11 +66,9 @@ if TRAIN:
 else:
     model = StateOnlyNN()
     model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
-    # Or for using DQN lib
-    """
-    model = DQN.load("./models/targetNetwork_trained")
-    """
     policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    # Or for using DQN lib
+    # policy = DQN.load("./models/targetNetwork_trained")
 
     eval_config = {
         **fast_env_config,

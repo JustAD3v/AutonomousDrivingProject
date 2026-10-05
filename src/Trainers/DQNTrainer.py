@@ -42,7 +42,7 @@ class DQNTrainer:
         loss.backward()
         self.main_net.optimizer.step()
 
-    def learn(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
+    def learn(self) -> TrainResult:
         start = time.time()
         print("[+] === Warm up starts ===")
         warmup_samples = 0
@@ -122,7 +122,6 @@ class DQNTrainer:
           self.record.register_episode_count(episode_count)
 
         training_duration = time.time()-start
-        print(f"[+] Training finished ! (Duration = {training_duration}s)\nTarget network saved to file : {save_file}")
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
         torch.save(self.target_net.state_dict(), save_file)

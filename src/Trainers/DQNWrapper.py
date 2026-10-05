@@ -18,6 +18,8 @@ class DQNWrapper:
             torch.save(self.model.target_net.state_dict(), path)
         else:
             self.model.save(path)
+        print(f"[+] Target network saved to file : {path}")
+
 
     def predict(self, state, deterministic=True):
         if self.use_custom:
