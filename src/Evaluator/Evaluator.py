@@ -1,32 +1,22 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
 import time
 
-from Agents.AbstractAgent import Agent
-
 class Evaluator:
     def __init__(self, 
-                 agent: Agent, 
-                 model, 
+                 policy, 
                  nb_episodes, 
                  env_config, 
                  render_delay=0.05,
                  use_gpu=False):
-        self.agent = agent
-        self.model = model
+        self.policy = policy
         self.nb_episodes = nb_episodes
         self.env = gym.make('highway-fast-v0', config=env_config, render_mode="human")
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
-        self.agent.init_agent(self.env,
-                              self.model,
-                              None,
-                              self.device)
+            
         self.action_labels = self.env.unwrapped.action_type.actions.values()
         self.render_delay = render_delay
-
 
     def eval(self):
         success = 0
@@ -36,7 +26,7 @@ class Evaluator:
             state, _ = self.env.reset()
             term = trunc = False
             while not (term | trunc):
-                action = self.agent.policy(state)
+                action, _ = self.policy.predict(state)
                 choices[action] += 1
                 episode_choices[action] += 1
                 new_state, reward, term, trunc, _ = self.env.step(action)
@@ -55,5 +45,3 @@ class Evaluator:
         choices_dict = dict(zip(self.action_labels, choices))
         print(f"Action choices : {choices_dict}")
         self.env.close()
-                
-        

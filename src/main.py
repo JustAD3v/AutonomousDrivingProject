@@ -1,39 +1,11 @@
 import torch
+import gymnasium as gym
 
-from Trainers.DQNTrainer import DQNTrainer
 from Trainers.TrainConfig import TrainConfigBuilder
+from Trainers.TrainerFactory import TrainerFactory
 from Evaluator.Evaluator import Evaluator 
-from Agents.LearningAgent import LearningAgent
-from Agents.GreedyAgent import GreedyAgent
-from Networks.BasicNN import BasicNN
+from Policies.CustomPolicy import CustomPolicy
 from Networks.StateOnlyNN import StateOnlyNN 
-
-# env_config = {
-#     "lanes_count": 4,
-#     "vehicles_count": 50,
-#     "controlled_vehicles": 1,
-#     "initial_lane_id": None,
-#     "duration": 40,  # [s]
-#     "ego_spacing": 2,
-#     "vehicles_density": 1.5,  # => changed from 1 to 1.5
-#     "collision_reward": -10,  # => changed from -1 to -10 The reward received when colliding with a vehicle.
-#     "right_lane_reward": 0.1,  # The reward received when driving on the right-most lanes, linearly mapped to zero for other lanes. => chnaged from 0.1 to 0.2
-#     "high_speed_reward": 0.4,  # The reward received when driving at full speed, linearly mapped to zero for lower speeds according to config["reward_speed_range"].
-#     "lane_change_reward": 0,  # The reward received at each lane change action.
-#     "reward_speed_range": [20, 30],  # [m/s] The reward for high speed is mapped linearly from this range to [0, 1].
-#     "normalize_reward": True,
-#     "offroad_terminal": False,
-#     "simulation_frequency": 15,  # [Hz]
-#     "policy_frequency": 1,  # [Hz]
-#     "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
-#     "screen_width": 600,  # [px]
-#     "screen_height": 150,  # [px]
-#     "centering_position": [0.3, 0.5],
-#     "scaling": 5.5,
-#     "show_trajectories": False,
-#     "render_agent": False,
-#     "offscreen_rendering": None
-# }
 
 fast_env_config = {
     "lanes_count": 4,
@@ -48,53 +20,65 @@ fast_env_config = {
     "reward_speed_range": [20, 30],
     "normalize_reward": True,
     "offroad_terminal": False,
-    # fast simulation
     "simulation_frequency": 5,
     "policy_frequency": 1,
 }
 
-# Change this variable to switch between Training phase and Evaluation phase 
 TRAIN = True
+USE_CUSTOM = False
 
 train_config = (
     TrainConfigBuilder()
     .epsilon_start(1.0)
-    .epsilon_decay(0.997) #0.997
+    .epsilon_decay(0.997)
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
     .gamma(0.95)
     .copy_freq(50)
     .iterations(30000)
+    .learning_rate(5e-4)
+    .train_freq(1)
+    .gradient_steps(1)
+    .policy_kwargs(dict(net_arch=[256, 256]))
     .build()
 )
 
+env = gym.make("highway-fast-v0", config=fast_env_config)
+
 if TRAIN:
-    agent = LearningAgent()
-    # main_network = BasicNN()
     main_network = StateOnlyNN()
     target_network = StateOnlyNN()
 
-    # too load an already trained model to train it more
-    # main_network.load_state_dict(torch.load('./models/targetNetwork_so.pt'))
+    trainer = TrainerFactory.create_trainer(
+        env=env,
+        config=train_config,
+        use_custom=USE_CUSTOM,
+        main_network=main_network,
+        target_network=target_network,
+        policy_str="MlpPolicy"
+    )
 
-    trainer = DQNTrainer(train_config,
-                        target_network,
-                        main_network,
-                        agent,
-                        env_name="highway-fast-v0",
-                        env_config=fast_env_config)
-
-    results = trainer.train(save_file="./models/targetNetwork_test.pt")
-    results.plot()
+    results = trainer.learn()
+    trainer.save("./models/targetNetwork_trained")
 
 else:
-    agent = GreedyAgent()
-    # model = BasicNN()
     model = StateOnlyNN()
     model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
-    evaluator = Evaluator(agent,
-                          model,
+    # Or for using DQN lib
+    """
+    model = DQN.load("./models/targetNetwork_trained")
+    """
+    policy = CustomPolicy(main_network=model, action_space=env.action_space)
+
+    eval_config = {
+        **fast_env_config,
+        "lanes_count": 3,
+        "vehicles_density": 1.3,
+        "duration": 30
+    }
+    evaluator = Evaluator(policy=policy,
                           nb_episodes=50,
-                          env_config=fast_env_config)
+                          env_config=eval_config,
+                          render_delay=0.0)
     evaluator.eval()

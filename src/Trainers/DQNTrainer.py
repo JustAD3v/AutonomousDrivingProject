@@ -8,7 +8,6 @@ import time
 
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
-from Agents.AbstractAgent import Agent
 from Trainers.TrainResult import TrainResult
 
 class DQNTrainer:
@@ -16,35 +15,34 @@ class DQNTrainer:
                  config: TrainConfig, 
                  target_network: nn.Module,
                  main_network: nn.Module, 
-                 agent: Agent, 
+                 policy, 
                  env_name = "highway-v0",  
                  env_config = None,
+                 env = None,
                  use_gpu = False):
-        self.env = gym.make(env_name, config=env_config)
+        if env is not None:
+            self.env = env
+        else:
+            self.env = gym.make(env_name, config=env_config)
+            
         self.config = config
-        self.agent = agent
+        self.policy = policy
         self.main_net = main_network
         self.target_net = target_network
         self.target_net.load_state_dict(self.main_net.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
         self.r_buffer = ReplayBuffer(self.config.buffer_size, 
-                                             config.batch_size,
-                                             config.warmup_size,
-                                             self.device)
+                                     config.batch_size,
+                                     config.warmup_size,
+                                     self.device)
         self.record = TrainResult(self.config.iterations)
-        self.agent.init_agent(self.env, 
-                              self.main_net,
-                              self.config,
-                              self.device)
 
     def optimize_main(self, loss):
-        """ Method to optimize the main networks weights given the loss """
         self.main_net.optimizer.zero_grad()
         loss.backward()
         self.main_net.optimizer.step()
 
-    def train(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
-        """ Warm up """
+    def learn(self, save_file="./models/targetNetwork2.pt", stats_logfile="") -> TrainResult:
         start = time.time()
         print("[+] === Warm up starts ===")
         warmup_samples = 0
@@ -52,15 +50,15 @@ class DQNTrainer:
             state, _ = self.env.reset()
             done = False
             while not done:
-                 action = self.agent.policy(state)
+                 action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
                  new_state, reward, term, trunc, _ = self.env.step(action)
                  done = term | trunc
                  self.r_buffer.push(
                    (
-                      np.asarray(state, dtype=np.float32).flatten(), # flatten only when storing
+                      np.asarray(state, dtype=np.float32).flatten(),
                       action, 
                       reward, 
-                      np.asarray(new_state, dtype=np.float32).flatten(), # flatten only when storing
+                      np.asarray(new_state, dtype=np.float32).flatten(),
                       done
                     )
                   )
@@ -69,7 +67,7 @@ class DQNTrainer:
             print(f"buffer filled with : {warmup_samples}/{self.config.warmup_size}")
         warmup_duration = time.time()-start
         print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
-        """ Training """
+
         start = time.time()
         print("[+] === Training starts ===")
         iteration = 0
@@ -81,17 +79,17 @@ class DQNTrainer:
           episode_return = 0
           nb_steps = 0
           while not done:
-            action = self.agent.policy(state)
+            action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
             new_state, reward, term, trunc, _ = self.env.step(action)
             episode_return += reward
             done = term | trunc
             nb_steps += 1
             self.r_buffer.push(
                (
-                  np.asarray(state, dtype=np.float32).flatten(), # flatten only when storing
+                  np.asarray(state, dtype=np.float32).flatten(),
                   action, 
                   reward, 
-                  np.asarray(new_state, dtype=np.float32).flatten(), # flatten only when storing
+                  np.asarray(new_state, dtype=np.float32).flatten(),
                   done
                 )
               )
@@ -110,7 +108,6 @@ class DQNTrainer:
               # optimize
               self.optimize_main(loss)
             if iteration % self.config.copy_freq == 0:
-              # copy main_net weights to target_net
               self.target_net.load_state_dict(self.main_net.state_dict())
               print("[!!] Weights of Target Network updated !")
             iteration += 1
@@ -128,7 +125,5 @@ class DQNTrainer:
         print(f"[+] Training finished ! (Duration = {training_duration}s)\nTarget network saved to file : {save_file}")
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
-        # TODO: implement conditional saving
         torch.save(self.target_net.state_dict(), save_file)
         return self.record
-    
