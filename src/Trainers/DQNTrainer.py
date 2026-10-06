@@ -39,7 +39,7 @@ class DQNTrainer:
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
     def epsilon_update(self, epsilon):
-      return epsilon + self.epsilon_step
+      return max(self.config.epsilon_min, epsilon + self.epsilon_step)
       #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
 
     def optimize_main(self, loss):
@@ -131,9 +131,9 @@ class DQNTrainer:
               print("[!!] Weights of Target Network updated !")
             iteration += 1
             state = new_state
-        
+            self.config.epsilon = self.epsilon_update(self.config.epsilon)        
+          
           print(f"[*] ({iteration}/{self.config.iterations}) | Episode finished (len={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
-          self.config.epsilon = self.epsilon_update(self.config.epsilon)
           episode_count += 1
           self.record.add_loss(total_loss/nb_steps)
           self.record.add_episode_return(episode_return)

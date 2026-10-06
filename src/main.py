@@ -39,13 +39,15 @@ USE_CUSTOM = args.use_custom
 train_config = (
     TrainConfigBuilder()
     .epsilon_start(1.0)
+    .epsilon_min(0.01)
     .epsilon_decay(0.997)
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
-    .gamma(0.95)
+    .gamma(0.8)
     .copy_freq(50)
-    .iterations(2e4)
+    .iterations(5e4)
+    .exploration_frac(0.1)
     .learning_rate(5e-4)
     .train_freq(1)
     .gradient_steps(1)
@@ -53,7 +55,7 @@ train_config = (
     .build()
 )
 
-env = gym.make("highway-fast-v0", config=fast_env_config)
+env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
     main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
@@ -68,14 +70,16 @@ if TRAIN:
     )
     results = trainer.learn()
     trainer.save("./models/targetNetwork_trained")
+    if results is not None:
+        results.plot()
 
 else:
-    # model = StateOnlyNN()
-    # model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
-    # policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    model = StateOnlyNN()
+    model.load_state_dict(torch.load('./models/targetNetwork_trained_save'))
+    policy = CustomPolicy(main_network=model, action_space=env.action_space)
     # Or for using DQN lib
 
-    policy = DQN.load("./models/final_model")
+    # policy = DQN.load("./models/final_model")
 
     eval_config = {
         **fast_env_config,
