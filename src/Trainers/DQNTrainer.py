@@ -16,7 +16,7 @@ class DQNTrainer:
                  target_network: nn.Module,
                  main_network: nn.Module, 
                  policy, 
-                 env_name = "highway-v0",  
+                 env_name = "highway-fast-v0",  
                  env_config = None,
                  env = None,
                  use_gpu = False):
@@ -49,14 +49,21 @@ class DQNTrainer:
 
     def learn(self) -> TrainResult:
         start = time.time()
+        env_time = 0
+        network_time = 0
+        predict_time = 0
         print("[+] === Warm up starts ===")
         warmup_samples = 0
         while warmup_samples < self.config.warmup_size:
             state, _ = self.env.reset()
             done = False
             while not done:
+                 predict_time_start = time.time()
                  action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
+                 predict_time += time.time() - predict_time_start
+                 env_time_start = time.time()
                  new_state, reward, term, trunc, _ = self.env.step(action)
+                 env_time += time.time() - env_time_start
                  done = term | trunc
                  self.r_buffer.push(
                    (
@@ -84,8 +91,12 @@ class DQNTrainer:
           episode_return = 0
           nb_steps = 0
           while not done:
+            predict_time_start = time.time()
             action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
+            predict_time += time.time() - predict_time_start
+            env_time_start = time.time()
             new_state, reward, term, trunc, _ = self.env.step(action)
+            env_time += time.time() - env_time_start
             episode_return += reward
             done = term | trunc
             nb_steps += 1
@@ -102,7 +113,9 @@ class DQNTrainer:
               # uniform draw of a batch
               states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
-              qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
+              network_time_start = time.time()
+              with torch.no_grad():
+                qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
               # rewards, dones and qvalues should all be on same device
               y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
               # calc y_main using MAIN NETWORK (network of the agent)
@@ -112,6 +125,7 @@ class DQNTrainer:
               total_loss += loss.item()
               # optimize
               self.optimize_main(loss)
+              network_time += time.time() - network_time_start
             if iteration % self.config.copy_freq == 0:
               self.target_net.load_state_dict(self.main_net.state_dict())
               print("[!!] Weights of Target Network updated !")
@@ -128,5 +142,9 @@ class DQNTrainer:
 
         training_duration = time.time()-start
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
+      
+        print(f"[+] Environment processing duration : = {env_time}s")
+        print(f"[+] Network processing duration : = {network_time}s")
+        print(f"[+] Prediction calculation duration : = {predict_time}s")
 
         return self.record
