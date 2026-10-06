@@ -124,5 +124,4 @@ class DQNTrainer:
         training_duration = time.time()-start
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
-        torch.save(self.target_net.state_dict(), save_file)
         return self.record
