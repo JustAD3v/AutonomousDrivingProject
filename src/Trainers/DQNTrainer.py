@@ -45,6 +45,11 @@ class DQNTrainer:
     def optimize_main(self, loss):
         self.main_net.optimizer.zero_grad()
         loss.backward()
+        
+        torch.nn.utils.clip_grad_norm_(
+          self.main_net.parameters(),
+          max_norm=10.0
+        )
         self.main_net.optimizer.step()
 
     def learn(self) -> TrainResult:
