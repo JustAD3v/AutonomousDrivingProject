@@ -59,7 +59,7 @@ class DQNTrainer:
                       action, 
                       reward, 
                       np.asarray(new_state, dtype=np.float32).flatten(),
-                      done
+                      term
                     )
                   )
                  warmup_samples += 1
@@ -90,7 +90,7 @@ class DQNTrainer:
                   action, 
                   reward, 
                   np.asarray(new_state, dtype=np.float32).flatten(),
-                  done
+                  term
                 )
               )
             if (iteration % self.config.train_freq == 0):

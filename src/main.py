@@ -45,7 +45,7 @@ train_config = (
     .batch_size(32)
     .gamma(0.95)
     .copy_freq(50)
-    .iterations(500)
+    .iterations(2e4)
     .learning_rate(5e-4)
     .train_freq(1)
     .gradient_steps(1)
