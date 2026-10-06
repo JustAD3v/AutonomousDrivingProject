@@ -56,8 +56,8 @@ train_config = (
 env = gym.make("highway-fast-v0", config=fast_env_config)
 
 if TRAIN:
-    main_network = StateOnlyNN()
-    target_network = StateOnlyNN()
+    main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 class StateOnlyNN(nn.Module):
-  def __init__(self, in_features=25, h1=256, h2=256, out_features=5):
+  def __init__(self, in_features=25, h1=256, h2=256, out_features=5, learning_rate=5e-4):
     # init internal pytorch nn.Module parent class
     super().__init__()
 
@@ -14,7 +14,7 @@ class StateOnlyNN(nn.Module):
     self.out = nn.Linear(h2, out_features)
 
     # other params
-    self.lr = 5e-4
+    self.lr = learning_rate
     self.loss_fn = nn.SmoothL1Loss()
     self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
 
