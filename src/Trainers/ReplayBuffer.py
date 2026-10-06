@@ -20,7 +20,7 @@ class ReplayBuffer:
         indices = np.random.choice(
             len(self.buffer),
             size=self.batch_size,
-            replace=False
+            replace=True
         )
         batch = [self.buffer[i] for i in indices]
         

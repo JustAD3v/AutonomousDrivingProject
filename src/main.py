@@ -13,6 +13,7 @@ from Networks.StateOnlyNN import StateOnlyNN
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
+parser.add_argument("--net_file", type=str)
 
 args = parser.parse_args()
 
@@ -35,17 +36,20 @@ fast_env_config = {
 
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
+NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
 
 train_config = (
     TrainConfigBuilder()
     .epsilon_start(1.0)
+    .epsilon_min(0.01)
     .epsilon_decay(0.997)
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
-    .gamma(0.95)
+    .gamma(0.8)
     .copy_freq(50)
-    .iterations(500)
+    .iterations(5e4)
+    .exploration_frac(0.1)
     .learning_rate(5e-4)
     .train_freq(1)
     .gradient_steps(1)
@@ -53,11 +57,11 @@ train_config = (
     .build()
 )
 
-env = gym.make("highway-fast-v0", config=fast_env_config)
+env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
-    main_network = StateOnlyNN()
-    target_network = StateOnlyNN()
+    main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
@@ -67,15 +71,17 @@ if TRAIN:
         policy_str="MlpPolicy"
     )
     results = trainer.learn()
-    trainer.save("./models/targetNetwork_trained")
+    trainer.save(NETWORK_FILE)
+    if results is not None:
+        results.plot()
 
 else:
-    # model = StateOnlyNN()
-    # model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
-    # policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    model = StateOnlyNN()
+    model.load_state_dict(torch.load(NETWORK_FILE))
+    policy = CustomPolicy(main_network=model, action_space=env.action_space)
     # Or for using DQN lib
 
-    policy = DQN.load("./models/final_model")
+    # policy = DQN.load("./models/final_model")
 
     eval_config = {
         **fast_env_config,

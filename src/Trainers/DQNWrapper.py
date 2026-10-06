@@ -11,7 +11,7 @@ class DQNWrapper:
             return self.model.learn()
         else:
             self.model.learn(total_timesteps=self.config.iterations)
-            return self
+            return None
 
     def save(self, path):
         if self.use_custom:
