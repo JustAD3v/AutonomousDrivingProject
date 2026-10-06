@@ -3,6 +3,7 @@ class TrainConfig:
         self.gamma = 0.95
         self.epsilon_start = 1.0
         self.epsilon = self.epsilon_start
+        self.exploration_frac = 0.1
         self.epsilon_decay = 0.994
         self.epsilon_min = 0.01
         self.buffer_size = 5000
@@ -83,6 +84,10 @@ class TrainConfigBuilder:
 
     def policy_kwargs(self, value):
         self._config.policy_kwargs = value
+        return self
+    
+    def exploration_frac(self, value):
+        self._config.exploration_frac = value
         return self
     
     def build(self):

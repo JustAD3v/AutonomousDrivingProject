@@ -36,6 +36,11 @@ class DQNTrainer:
                                      config.warmup_size,
                                      self.device)
         self.record = TrainResult(self.config.iterations)
+        self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
+
+    def epsilon_update(self, epsilon):
+      return epsilon + self.epsilon_step
+      #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
 
     def optimize_main(self, loss):
         self.main_net.optimizer.zero_grad()
@@ -114,7 +119,7 @@ class DQNTrainer:
             state = new_state
         
           print(f"[*] ({iteration}/{self.config.iterations}) | Episode finished (len={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
-          self.config.epsilon = max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
+          self.config.epsilon = self.epsilon_update(self.config.epsilon)
           episode_count += 1
           self.record.add_loss(total_loss/nb_steps)
           self.record.add_episode_return(episode_return)
