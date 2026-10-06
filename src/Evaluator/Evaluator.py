@@ -12,7 +12,8 @@ class Evaluator:
                  use_gpu=False):
         self.policy = policy
         self.nb_episodes = nb_episodes
-        self.env = gym.make('highway-fast-v0', config=env_config, render_mode="human")
+        # self.env = gym.make('highway-fast-v0', config=env_config, render_mode="human")
+        self.env = gym.make('highway-fast-v0')
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.action_labels = self.env.unwrapped.action_type.actions.values()
@@ -26,7 +27,7 @@ class Evaluator:
             state, _ = self.env.reset()
             term = trunc = False
             while not (term | trunc):
-                action, _ = self.policy.predict(state)
+                action, _ = self.policy.predict(state, deterministic=True)
                 choices[action] += 1
                 episode_choices[action] += 1
                 new_state, reward, term, trunc, _ = self.env.step(action)

@@ -7,7 +7,9 @@ class CustomPolicy:
         self.main_network = main_network
         self.action_space = action_space
 
-    def predict(self, state, epsilon=0.0, device="cpu"):
+    def predict(self, state, epsilon=0.0, device="cpu", deterministic=False):
+        if deterministic:
+            epsilon = 0.0
         if random.random() < epsilon and self.action_space is not None:
             return self.action_space.sample(), None
 

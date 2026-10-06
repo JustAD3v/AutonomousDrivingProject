@@ -26,7 +26,7 @@ fast_env_config = {
 }
 
 TRAIN = False
-USE_CUSTOM = True
+USE_CUSTOM = False
 
 train_config = (
     TrainConfigBuilder()
@@ -64,11 +64,12 @@ if TRAIN:
     trainer.save("./models/targetNetwork_trained")
 
 else:
-    model = StateOnlyNN()
-    model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
-    policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    # model = StateOnlyNN()
+    # model.load_state_dict(torch.load('./models/targetNetwork_test.pt'))
+    # policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    
     # Or for using DQN lib
-    # policy = DQN.load("./models/targetNetwork_trained")
+    policy = DQN.load("./models/final_model")
 
     eval_config = {
         **fast_env_config,
@@ -77,7 +78,7 @@ else:
         "duration": 30
     }
     evaluator = Evaluator(policy=policy,
-                          nb_episodes=50,
-                          env_config=eval_config,
+                          nb_episodes=100,
+                          env_config=None,
                           render_delay=0.0)
     evaluator.eval()
