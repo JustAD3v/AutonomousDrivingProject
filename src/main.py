@@ -13,6 +13,7 @@ from Networks.StateOnlyNN import StateOnlyNN
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
+parser.add_argument("--net_file", type=str)
 
 args = parser.parse_args()
 
@@ -35,6 +36,7 @@ fast_env_config = {
 
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
+NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
 
 train_config = (
     TrainConfigBuilder()
@@ -69,13 +71,13 @@ if TRAIN:
         policy_str="MlpPolicy"
     )
     results = trainer.learn()
-    trainer.save("./models/targetNetwork_trained")
+    trainer.save(NETWORK_FILE)
     if results is not None:
         results.plot()
 
 else:
     model = StateOnlyNN()
-    model.load_state_dict(torch.load('./models/targetNetwork_trained_save'))
+    model.load_state_dict(torch.load(NETWORK_FILE))
     policy = CustomPolicy(main_network=model, action_space=env.action_space)
     # Or for using DQN lib
 
