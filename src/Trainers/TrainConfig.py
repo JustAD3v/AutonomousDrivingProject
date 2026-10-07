@@ -1,3 +1,6 @@
+import json
+
+
 class TrainConfig:
     def __init__(self):
         self.gamma = 0.95
@@ -14,6 +17,13 @@ class TrainConfig:
         self.iterations = 500
         self.learning_rate = 5e-4
         self.policy_kwargs = dict(net_arch=[256, 256])
+
+    def to_json(self):
+        return json.dumps(self.__dict__)
+
+    def from_json(self, value):
+        self.__dict__.update(json.loads(value))
+        return self
 
     def to_sb3_kwargs(self):
         return {

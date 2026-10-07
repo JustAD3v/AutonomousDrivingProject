@@ -14,6 +14,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
 parser.add_argument("--net_file", type=str)
+parser.add_argument("--config", type=str)
 
 args = parser.parse_args()
 
@@ -56,6 +57,9 @@ train_config = (
     .policy_kwargs(dict(net_arch=[256, 256]))
     .build()
 )
+if args.config:
+    with open(args.config) as f:
+        train_config.from_json(f.read())
 
 env = gym.make("highway-fast-v0", config=None)
 
