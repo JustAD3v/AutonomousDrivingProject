@@ -7,13 +7,14 @@ class Evaluator:
     def __init__(self, 
                  policy, 
                  nb_episodes, 
-                 env_config, 
+                 env_config,
+                 render_mode=None, 
                  render_delay=0.05,
                  use_gpu=False):
         self.policy = policy
         self.nb_episodes = nb_episodes
-        # self.env = gym.make('highway-fast-v0', config=env_config, render_mode="human")
-        self.env = gym.make('highway-fast-v0')
+        self.env = gym.make('highway-fast-v0', config=env_config, render_mode=render_mode)
+        # self.env = gym.make('highway-fast-v0')
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.action_labels = self.env.unwrapped.action_type.actions.values()

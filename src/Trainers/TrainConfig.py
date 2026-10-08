@@ -17,6 +17,8 @@ class TrainConfig:
         self.iterations = 500
         self.learning_rate = 5e-4
         self.policy_kwargs = dict(net_arch=[256, 256])
+        # not used for now
+        self.seed = 42
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -98,6 +100,10 @@ class TrainConfigBuilder:
     
     def exploration_frac(self, value):
         self._config.exploration_frac = value
+        return self
+    
+    def seed(self, value):
+        self._config.seed = value
         return self
     
     def build(self):

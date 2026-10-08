@@ -3,6 +3,7 @@ import argparse
 import torch
 import gymnasium as gym
 from stable_baselines3 import DQN
+import random
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainerFactory import TrainerFactory
@@ -15,6 +16,8 @@ parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
+parser.add_argument("--render_delay", type=float)
+parser.add_argument("--render_human", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -38,6 +41,7 @@ fast_env_config = {
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
+SEED = args.seed if args.seed else random.randint(0, 2**32 - 1)
 
 train_config = (
     TrainConfigBuilder()
@@ -72,7 +76,8 @@ if TRAIN:
         use_custom=USE_CUSTOM,
         main_network=main_network,
         target_network=target_network,
-        policy_str="MlpPolicy"
+        policy_str="MlpPolicy",
+        seed=SEED
     )
     results = trainer.learn()
     trainer.save(NETWORK_FILE)
@@ -80,12 +85,12 @@ if TRAIN:
         results.plot()
 
 else:
-    model = StateOnlyNN()
-    model.load_state_dict(torch.load(NETWORK_FILE))
-    policy = CustomPolicy(main_network=model, action_space=env.action_space)
-    # Or for using DQN lib
-
-    # policy = DQN.load("./models/final_model")
+    if USE_CUSTOM:
+        model = StateOnlyNN()
+        model.load_state_dict(torch.load(NETWORK_FILE))
+        policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    else:
+        policy = DQN.load(NETWORK_FILE)
 
     eval_config = {
         **fast_env_config,
@@ -94,9 +99,17 @@ else:
         "duration": 30
     }
 
+    render_mode = None
+    render_delay = 0.0
+    if args.render_human:
+        render_mode = "human"
+    if args.render_delay:
+        render_delay = args.render_delay
+
     evaluator = Evaluator(policy=policy,
                           nb_episodes=100,
                           env_config=None,
-                          render_delay=0.0)
+                          render_delay=render_delay,
+                          render_mode=render_mode)
 
     evaluator.eval()

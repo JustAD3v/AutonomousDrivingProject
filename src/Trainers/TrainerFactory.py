@@ -1,4 +1,5 @@
 from Trainers.DQNWrapper import DQNWrapper
+import random
 
 class TrainerFactory:
     @staticmethod
@@ -8,7 +9,8 @@ class TrainerFactory:
         use_custom=True,
         main_network=None,
         target_network=None,
-        policy_str="MlpPolicy"
+        policy_str="MlpPolicy",
+        seed=random.randint(0, 2**32 - 1)
     ) -> DQNWrapper:
         if use_custom:
             from Trainers.DQNTrainer import DQNTrainer
@@ -23,10 +25,10 @@ class TrainerFactory:
                 policy=policy,
                 env=env
             )
-            return DQNWrapper(model=trainer, use_custom=True, config=config)
+            return DQNWrapper(model=trainer, use_custom=True, config=config, seed=seed)
         else:
             from stable_baselines3 import DQN
 
             sb3_kwargs = config.to_sb3_kwargs() if config else {}
             sb3_model = DQN(policy_str, env, **sb3_kwargs)
-            return DQNWrapper(model=sb3_model, use_custom=False, config=config)
+            return DQNWrapper(model=sb3_model, use_custom=False, config=config, seed=seed)
