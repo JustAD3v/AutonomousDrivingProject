@@ -3,6 +3,7 @@ import argparse
 import torch
 import gymnasium as gym
 from stable_baselines3 import DQN
+import random
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainerFactory import TrainerFactory
@@ -33,13 +34,14 @@ fast_env_config = {
     "reward_speed_range": [20, 30],
     "normalize_reward": True,
     "offroad_terminal": False,
-    # "simulation_frequency": 5,
-    # "policy_frequency": 1,
+    "simulation_frequency": 5,
+    "policy_frequency": 1,
 }
 
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
+SEED = args.seed if args.seed else random.randint(0, 2**32 - 1)
 
 train_config = (
     TrainConfigBuilder()
@@ -74,7 +76,8 @@ if TRAIN:
         use_custom=USE_CUSTOM,
         main_network=main_network,
         target_network=target_network,
-        policy_str="MlpPolicy"
+        policy_str="MlpPolicy",
+        seed=SEED
     )
     results = trainer.learn()
     trainer.save(NETWORK_FILE)

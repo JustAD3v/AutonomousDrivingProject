@@ -5,7 +5,6 @@ import gymnasium as gym
 import highway_env
 import numpy as np
 import time
-import random
 
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
@@ -20,8 +19,7 @@ class DQNTrainer:
                  env_name = "highway-fast-v0",  
                  env_config = None,
                  env = None,
-                 use_gpu = False,
-                 seed=random.randint(0, 2**32 - 1)):
+                 use_gpu = False):
         if env is not None:
             self.env = env
         else:
@@ -39,20 +37,10 @@ class DQNTrainer:
                                      self.device)
         self.record = TrainResult(self.config.iterations)
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
-        self.set_seed(seed)
 
     def epsilon_update(self, epsilon):
       return max(self.config.epsilon_min, epsilon + self.epsilon_step)
       #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
-
-    def set_seed(seed):
-      random.seed(seed)
-      np.random.seed(seed)
-      torch.manual_seed(seed)
-
-      if torch.cuda.is_available():
-          torch.cuda.manual_seed(seed)
-          torch.cuda.manual_seed_all(seed)
 
     def optimize_main(self, loss):
         self.main_net.optimizer.zero_grad()
