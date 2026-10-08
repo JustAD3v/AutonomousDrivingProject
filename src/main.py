@@ -42,7 +42,6 @@ fast_env_config = {
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
-SEED = args.seed if args.seed else random.randint(0, 2**32 - 1)
 
 train_config = (
     TrainConfigBuilder()
@@ -62,9 +61,15 @@ train_config = (
     .policy_kwargs(dict(net_arch=[256, 256]))
     .build()
 )
+
 if args.config:
     with open(args.config) as f:
         train_config.from_json(f.read())
+
+# overwrite seed if in args
+if args.seed:
+    train_config.seed(args.seed)
+
 
 env = gym.make("highway-fast-v0", config=None)
 
@@ -78,7 +83,7 @@ if TRAIN:
         main_network=main_network,
         target_network=target_network,
         policy_str="MlpPolicy",
-        seed=SEED
+        seed=train_config.seed
     )
     results = trainer.learn()
     trainer.save(NETWORK_FILE)

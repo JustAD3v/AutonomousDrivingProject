@@ -1,5 +1,5 @@
 import json
-
+import random
 
 class TrainConfig:
     def __init__(self):
@@ -18,7 +18,7 @@ class TrainConfig:
         self.learning_rate = 5e-4
         self.policy_kwargs = dict(net_arch=[256, 256])
         # not used for now
-        self.seed = 42
+        self.seed = random.getrandbits(32)
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -39,6 +39,8 @@ class TrainConfig:
             "target_update_interval": self.copy_freq,
             "verbose": 1,
             "policy_kwargs": self.policy_kwargs,
+            "exploration_final_eps": self.epsilon_min,
+            "seed": self.seed
         }
 
 class TrainConfigBuilder:
