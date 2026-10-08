@@ -68,7 +68,7 @@ if args.config:
 
 # overwrite seed if in args
 if args.seed:
-    train_config.seed(args.seed)
+    train_config.seed = args.seed
 
 
 env = gym.make("highway-fast-v0", config=None)
