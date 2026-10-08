@@ -18,6 +18,7 @@ parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
 parser.add_argument("--render_human", action="store_true", default=False)
+parser.add_argument("--seed", type=int)
 
 args = parser.parse_args()
 
