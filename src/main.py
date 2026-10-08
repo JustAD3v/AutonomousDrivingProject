@@ -15,6 +15,8 @@ parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
+parser.add_argument("--render_delay", type=float)
+parser.add_argument("--render_human", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -31,8 +33,8 @@ fast_env_config = {
     "reward_speed_range": [20, 30],
     "normalize_reward": True,
     "offroad_terminal": False,
-    "simulation_frequency": 5,
-    "policy_frequency": 1,
+    # "simulation_frequency": 5,
+    # "policy_frequency": 1,
 }
 
 TRAIN = args.train
@@ -80,12 +82,12 @@ if TRAIN:
         results.plot()
 
 else:
-    model = StateOnlyNN()
-    model.load_state_dict(torch.load(NETWORK_FILE))
-    policy = CustomPolicy(main_network=model, action_space=env.action_space)
-    # Or for using DQN lib
-
-    # policy = DQN.load("./models/final_model")
+    if USE_CUSTOM:
+        model = StateOnlyNN()
+        model.load_state_dict(torch.load(NETWORK_FILE))
+        policy = CustomPolicy(main_network=model, action_space=env.action_space)
+    else:
+        policy = DQN.load(NETWORK_FILE)
 
     eval_config = {
         **fast_env_config,
@@ -94,9 +96,17 @@ else:
         "duration": 30
     }
 
+    render_mode = None
+    render_delay = 0.0
+    if args.render_human:
+        render_mode = "human"
+    if args.render_delay:
+        render_delay = args.render_delay
+
     evaluator = Evaluator(policy=policy,
                           nb_episodes=100,
                           env_config=None,
-                          render_delay=0.0)
+                          render_delay=render_delay,
+                          render_mode=render_mode)
 
     evaluator.eval()
