@@ -86,15 +86,18 @@ class WocaRDQN:
       self.robust_net.optimizer.step()
 
     def getWocaMinQ(self, subset_actions, states):
-      qvalues = self.woca_net(states.to(self.device)) # (B, 5)
-      # for each set of 5 qvalues only keep the qvalues associated
-      # to actions that are in subset_actions
-      qvalues = [
-         qvalues[row, idx]
-         for row, idx in enumerate(subset_actions)
-      ]
-      # keep only the minimum qvalue
-      minQValues = torch.min(qvalues, dim=1).values
+      with torch.no_grad():
+        # don't create a graph for qvalues either way it will bind qvalues to the graph
+        # and when the auto grad releases the tensor we can't use them anymore
+        # even though we return it (we return minQvalues which is bound to qvalues)
+        qvalues = self.woca_net(states.to(self.device)) # (B, 5)
+        # for each set of 5 qvalues only keep the qvalue associated
+        # to the action from subset_actions
+        # that has the minimum value
+        minQValues = torch.stack([
+          qvalues[row, idx].min()
+          for row, idx in enumerate(subset_actions)
+        ])
       return minQValues
 
     def filter_actions(self, lb_q, ub_q):
@@ -128,40 +131,88 @@ class WocaRDQN:
 
       # Compute bounds using CROWN
       lb_qvalues, ub_qvalues = lirpa_model.compute_bounds(x=(bounded_qvalues,), method='CROWN')
-      print(f'CROWN bounds: lower={lb_qvalues.item()}, upper={ub_qvalues.item()}')
+      # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
 
       # filter actions
       return self.filter_actions(lb_qvalues, ub_qvalues)
 
     def getDistMax(self, states, grad_step_size,grad_steps):
-      # use require grad on states
-      states = states.requires_grad_(True)
+      # detach states to not change the computational graph on it
+      states = states.detach()
     
       # get distribution from qvalues
-      qvalues = self.robust_net(states)
-      probs = F.softmax(states, dim=1)
+      with torch.no_grad():
+        # don't create a graph either way it will bind probs to the robust_net graph
+        # and at the end it will release the tensors used
+        # so next use of probs in the loop after will cause errors (reuse of released tensors)
+        qvalues = self.robust_net(states)
+        probs = F.log_softmax(qvalues, dim=1)
 
       # init delta with random pertubration in [-eps; eps]
-      delta = torch.empty_like(states).uniform_(-self.attack_bound, self.attack_bound).requires_grad_(True)
+      delta = torch.empty_like(states).uniform_(-self.attack_bound, self.attack_bound)
 
       # find perturbation delta that maximizes the distance using gradient ascent
       dist = None
       for _ in range(grad_steps):
-        p_states = torch.add(states, delta)
+        # attach delta to the graph to register operations on it
+        # in order to compute the auto grad
+        delta.requires_grad_(True)
+
+        # operations recorded in the graph
+        p_states = states + delta
         p_qvalues = self.robust_net(p_states)
-        p_probs = F.softmax(p_qvalues, dim=1)
-        dist = F.kl_div(p_probs, probs)
-        grad = torch.autograd.grad(outputs=dist, inputs=p_states)
-        delta = delta + grad_step_size*grad      
-      return dist
+        p_probs = F.log_softmax(p_qvalues, dim=1)
+
+        dist = F.kl_div(
+            p_probs,
+            probs,
+            reduction="batchmean",
+            # this indicates that the target param (probs.log()) is passed in the log space
+            # it is recommended for soft_max log output in the documentation :
+            # https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.kl_div.html
+            log_target=True
+        )
+
+        # uses the graph to compute gradient
+        grad = torch.autograd.grad(dist, delta)[0]
+
+        with torch.no_grad():
+            # don't include those calculations in the comutational graph
+            delta = torch.clamp(
+                delta + grad_step_size * grad,
+                min=-self.attack_bound,
+                max=self.attack_bound
+            )
+        # detach delta from the graph so next gradient calculation 
+        # is a fresh new gradient independent from the previous one
+        delta = delta.detach()
+
+      # now we have the delta that maximizes the distance
+      # compute the actual distance outside of the loop so it is associated 
+      # to a fresh graph that will be used by the robust_net to calc loss and optimize the net      
+      p_states = states + delta
+      p_qvalues = self.robust_net(p_states)
+      p_probs = F.log_softmax(p_qvalues, dim=1)
+      final_dist = F.kl_div(
+        p_probs,
+        probs,
+        reduction="batchmean",
+        log_target=True
+      )
+      
+      return final_dist
 
     def getStateWeight(self, states):
-      max_qvalues = self.robust_net.getMaxQ(states, self.env.action_space.n, self.device)
-      min_qvalues = self.robust_net.getMinQ(states, self.env.action_space.n, self.device)
+      # use main_net to calculate the state weight as the paper says
+      max_qvalues = self.main_net.getMaxQ(states, self.env.action_space.n, self.device)
+      min_qvalues = self.main_net.getMinQ(states, self.env.action_space.n, self.device)
       return torch.sub(max_qvalues, min_qvalues)
     
     def calcRegularization(self, states, grad_step_size, grad_steps):
-      w_states = self.getStateWeight(states)
+      with torch.no_grad():
+        # w(s) does not need to be part of the graph for backprop
+        # It can be treated as a constant 
+        w_states = self.getStateWeight(states)
       max_dist = self.getDistMax(states, grad_step_size, grad_steps)
       reg = torch.mul(w_states, max_dist)
       return reg.mean()
@@ -249,8 +300,12 @@ class WocaRDQN:
 
               # ============ TRAIN WOCA NETWORK ============
               subset_actions = self.getSubsetActions(next_states)
-              woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
-              y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+              with torch.no_grad():
+                # no need to build a graph for calculating target
+                # (no backprop is computed)
+                woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
+                y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+              
               y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
               woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
               self.optimize_woca(woca_loss)
