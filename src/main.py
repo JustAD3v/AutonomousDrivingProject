@@ -11,14 +11,18 @@ from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
 from Networks.StateOnlyNN import StateOnlyNN
 
+from Adversarial.RandomAdversarial import RandomAdversarial
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
+parser.add_argument("--adversarial", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
 parser.add_argument("--render_human", action="store_true", default=False)
 parser.add_argument("--seed", type=int)
+parser.add_argument("--attack_bound", type=int)
 
 args = parser.parse_args()
 
@@ -112,10 +116,18 @@ else:
     if args.render_delay:
         render_delay = args.render_delay
 
+    adversarial = None
+    attack_bound = 0.2
+    if args.adversarial:
+        adversarial = RandomAdversarial(attack_bound)
+    if args.attack_bound:
+        attack_bound = args.attack_bound
+
     evaluator = Evaluator(policy=policy,
                           nb_episodes=100,
                           env_config=None,
                           render_delay=render_delay,
-                          render_mode=render_mode)
+                          render_mode=render_mode,
+                          adversarial=adversarial)
 
     evaluator.eval()
