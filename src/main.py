@@ -130,6 +130,6 @@ else:
                           env_config=None,
                           render_delay=render_delay,
                           render_mode=render_mode,
-                          adversarial=adversarial)
-
+                          adversarial=adversarial,
+                          seed=args.seed if args.seed else None)
     evaluator.eval()
