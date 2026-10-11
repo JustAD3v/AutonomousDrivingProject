@@ -12,6 +12,7 @@ from Policies.CustomPolicy import CustomPolicy
 from Networks.StateOnlyNN import StateOnlyNN
 
 from Adversarial.RandomAdversarial import RandomAdversarial
+from Adversarial.FGSMAdversarial import FGSMAdversarial
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
@@ -118,10 +119,11 @@ else:
 
     adversarial = None
     attack_bound = 0.2
-    if args.adversarial:
-        adversarial = RandomAdversarial(attack_bound)
     if args.attack_bound:
         attack_bound = args.attack_bound
+    if args.adversarial:
+        # adversarial = RandomAdversarial(policy, attack_bound)
+        adversarial = FGSMAdversarial(policy, attack_bound)
 
     evaluator = Evaluator(policy=policy,
                           nb_episodes=100,

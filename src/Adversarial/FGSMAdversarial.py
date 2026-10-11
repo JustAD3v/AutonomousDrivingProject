@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 from Adversarial.AbstractAdversarial import Adversarial
 
@@ -6,5 +7,11 @@ class FGSMAdversarial(Adversarial):
         super().__init__(policy, attack_bound)
 
     def disrupt(self, state):
-        perturbations = [np.random.uniform(-self.attack_bound, self.attack_bound, len(state))]
-        return np.add(state, perturbations)
+        shape = state.shape
+        state_tensor = torch.tensor(np.ravel(state), dtype=torch.float32, requires_grad=True)
+        q_values = self.policy.main_network(state_tensor)
+        action = q_values.argmax()
+        loss = q_values[action]
+        gradients = torch.autograd.grad(outputs=loss, inputs=state_tensor)[0]
+        perturbations = self.attack_bound * torch.sign(gradients).reshape(shape)
+        return np.add(state, perturbations.numpy())
