@@ -19,7 +19,7 @@ class TrainerFactory:
                 from Trainers.DQNTrainer import DQNTrainer
                 from Policies.CustomPolicy import CustomPolicy
 
-                policy = CustomPolicy(main_network=main_network, action_space=env.action_space)
+                policy = CustomPolicy(network=main_network, action_space=env.action_space)
 
                 trainer = DQNTrainer(
                     config=config,
@@ -34,7 +34,7 @@ class TrainerFactory:
                 from Trainers.WocaRDQN import WocaRDQN
                 from Policies.CustomPolicy import CustomPolicy
 
-                policy = CustomPolicy(main_network=main_network, action_space=env.action_space)
+                policy = CustomPolicy(network=robust_network, action_space=env.action_space)
 
                 trainer = WocaRDQN(
                     config=config,

@@ -105,7 +105,7 @@ else:
     if USE_CUSTOM:
         model = StateOnlyNN()
         model.load_state_dict(torch.load(NETWORK_FILE))
-        policy = CustomPolicy(main_network=model, action_space=env.action_space)
+        policy = CustomPolicy(network=model, action_space=env.action_space)
     else:
         policy = DQN.load(NETWORK_FILE)
 
