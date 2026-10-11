@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--adversarial", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
+parser.add_argument("--trainer", type=str, choices=["dqn", "sb3_dqn", "wocar"], default="dqn")
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
@@ -46,6 +47,7 @@ fast_env_config = {
 
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
+TRAINER = args.trainer
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
 
 train_config = (
@@ -81,12 +83,16 @@ env = gym.make("highway-fast-v0", config=None)
 if TRAIN:
     main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
     target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    woca_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    robust_network = StateOnlyNN(learning_rate=train_config.learning_rate)
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
-        use_custom=USE_CUSTOM,
+        trainer=TRAINER,
         main_network=main_network,
         target_network=target_network,
+        woca_network=woca_network,
+        robust_network=robust_network,
         policy_str="MlpPolicy",
         seed=train_config.seed
     )
