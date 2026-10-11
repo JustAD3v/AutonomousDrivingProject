@@ -22,7 +22,7 @@ parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
 parser.add_argument("--render_human", action="store_true", default=False)
 parser.add_argument("--seed", type=int)
-parser.add_argument("--attack_bound", type=int)
+parser.add_argument("--attack_bound", type=float)
 
 args = parser.parse_args()
 
