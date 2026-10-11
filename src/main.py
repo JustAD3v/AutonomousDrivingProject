@@ -77,7 +77,6 @@ if args.config:
 if args.seed:
     train_config.seed = args.seed
 
-
 env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
@@ -88,7 +87,7 @@ if TRAIN:
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
-        trainer=TRAINER,
+        trainer_type=TRAINER,
         main_network=main_network,
         target_network=target_network,
         woca_network=woca_network,

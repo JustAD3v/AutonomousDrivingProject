@@ -9,7 +9,7 @@ class FGSMAdversarial(Adversarial):
     def disrupt(self, state):
         shape = state.shape
         state_tensor = torch.tensor(np.ravel(state), dtype=torch.float32, requires_grad=True)
-        q_values = self.policy.main_network(state_tensor)
+        q_values = self.policy.network(state_tensor)
         action = q_values.argmax()
         loss = q_values[action]
         gradients = torch.autograd.grad(outputs=loss, inputs=state_tensor)[0]
