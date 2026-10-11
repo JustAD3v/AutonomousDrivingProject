@@ -33,6 +33,15 @@ class StateOnlyNN(nn.Module):
         maxQValues = torch.max(qvalues, dim=1).values
         return maxQValues
   
+  def getMinQ(self, states, nb_actions, device):
+    with torch.no_grad():
+        # process all the inputs in one batch, doing only one forward call 
+        # forward is done internally by calling self(...) because we called the method "forward"
+        qvalues = self(states.to(device)) # (B, 5)
+        # reduce the QValues to only the max among the 5 actions for every state => (B, 5) => (B,)
+        minQValues = torch.min(qvalues, dim=1).values
+        return minQValues
+  
   def getArgMaxQPolicy(self, state, nb_actions, device):
     with torch.no_grad():
       state_t = torch.FloatTensor(np.ravel(state)) # (25,)
@@ -45,6 +54,6 @@ class StateOnlyNN(nn.Module):
     qvalues = self(states.to(device)) # => (B,5)
     # Select Q(s, action_chosen)
     actions = actions.to(device).long().unsqueeze(1) # => (B,1)
-    selected_qvalues = qvalues.gather(1, actions).squeeze(1) # gather => (B,1) => squeeze => (B,)
+    selected_qvalues = qvalues.gather(1, actions).squeeze(1) # gather taking only the qvalue of chosen action => (B,1) => squeeze => (B,)
 
     return selected_qvalues

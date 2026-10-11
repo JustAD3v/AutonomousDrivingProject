@@ -31,7 +31,6 @@ class Evaluator:
         if seed is not None:
             self.set_seed(seed)
 
-
     def eval(self):
         success = 0
         choices = [0 for i in range(self.env.action_space.n)]
@@ -66,6 +65,5 @@ class Evaluator:
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-
         self.env.reset(seed=seed)
         
