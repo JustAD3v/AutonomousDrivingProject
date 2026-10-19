@@ -10,15 +10,22 @@ from Trainers.TrainerFactory import TrainerFactory
 from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
 from Networks.StateOnlyNN import StateOnlyNN
+from Networks.NetworkFactory import NetworkFactory
+
+from Adversarial.RandomAdversarial import RandomAdversarial
+from Adversarial.FGSMAdversarial import FGSMAdversarial
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
+parser.add_argument("--adversarial", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
+parser.add_argument("--trainer", type=str, choices=["dqn", "sb3_dqn", "wocar"], default="dqn")
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
 parser.add_argument("--render_human", action="store_true", default=False)
 parser.add_argument("--seed", type=int)
+parser.add_argument("--attack_bound", type=float)
 
 args = parser.parse_args()
 
@@ -41,6 +48,7 @@ fast_env_config = {
 
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
+TRAINER = args.trainer
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
 
 train_config = (
@@ -51,9 +59,9 @@ train_config = (
     .buffer_size(15000)
     .warmup_size(400)
     .batch_size(32)
-    .gamma(0.8)
+    .gamma(0.95)
     .copy_freq(50)
-    .iterations(5e4)
+    .iterations(200)
     .exploration_frac(0.1)
     .learning_rate(5e-4)
     .train_freq(1)
@@ -70,18 +78,15 @@ if args.config:
 if args.seed:
     train_config.seed = args.seed
 
-
 env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
-    main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
-    target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    network_factory=NetworkFactory(train_config=train_config, network_type=StateOnlyNN)
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
-        use_custom=USE_CUSTOM,
-        main_network=main_network,
-        target_network=target_network,
+        trainer_type=TRAINER,
+        network_factory=network_factory,
         policy_str="MlpPolicy",
         seed=train_config.seed
     )
@@ -94,7 +99,7 @@ else:
     if USE_CUSTOM:
         model = StateOnlyNN()
         model.load_state_dict(torch.load(NETWORK_FILE))
-        policy = CustomPolicy(main_network=model, action_space=env.action_space)
+        policy = CustomPolicy(network=model, action_space=env.action_space)
     else:
         policy = DQN.load(NETWORK_FILE)
 
@@ -112,10 +117,19 @@ else:
     if args.render_delay:
         render_delay = args.render_delay
 
+    adversarial = None
+    attack_bound = 0.2
+    if args.attack_bound:
+        attack_bound = args.attack_bound
+    if args.adversarial:
+        # adversarial = RandomAdversarial(policy, attack_bound)
+        adversarial = FGSMAdversarial(policy, attack_bound)
+
     evaluator = Evaluator(policy=policy,
                           nb_episodes=100,
                           env_config=None,
                           render_delay=render_delay,
-                          render_mode=render_mode)
-
+                          render_mode=render_mode,
+                          adversarial=adversarial,
+                          seed=args.seed if args.seed else None)
     evaluator.eval()

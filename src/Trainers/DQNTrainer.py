@@ -50,7 +50,7 @@ class DQNTrainer:
           self.main_net.parameters(),
           max_norm=10.0
         )
-        self.main_net.optimizer.step()
+        self.main_net.optimizer.step()       
 
     def learn(self) -> TrainResult:
         start = time.time()

@@ -1,7 +1,12 @@
+from Adversarial.AbstractAdversarial import Adversarial
+from Adversarial.NeutralAdversarial import NeutralAdversarial
+
 import torch
 import gymnasium as gym
 import highway_env
 import time
+import random
+import numpy as np
 
 class Evaluator:
     def __init__(self, 
@@ -10,7 +15,10 @@ class Evaluator:
                  env_config,
                  render_mode=None, 
                  render_delay=0.05,
-                 use_gpu=False):
+                 use_gpu=False,
+                 adversarial:Adversarial = None,
+                 attack_bound=0.5,
+                 seed=None):
         self.policy = policy
         self.nb_episodes = nb_episodes
         self.env = gym.make('highway-fast-v0', config=env_config, render_mode=render_mode)
@@ -19,6 +27,9 @@ class Evaluator:
             
         self.action_labels = self.env.unwrapped.action_type.actions.values()
         self.render_delay = render_delay
+        self.adversarial = adversarial if adversarial is not None else NeutralAdversarial(attack_bound) 
+        if seed is not None:
+            self.set_seed(seed)
 
     def eval(self):
         success = 0
@@ -28,6 +39,8 @@ class Evaluator:
             state, _ = self.env.reset()
             term = trunc = False
             while not (term | trunc):
+                # this line disrupt the current state observed by the agent but does not change the actual state of the environment
+                state = self.adversarial.disrupt(state)
                 action, _ = self.policy.predict(state, deterministic=True)
                 choices[action] += 1
                 episode_choices[action] += 1
@@ -47,3 +60,10 @@ class Evaluator:
         choices_dict = dict(zip(self.action_labels, choices))
         print(f"Action choices : {choices_dict}")
         self.env.close()
+
+    def set_seed(self, seed):
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        self.env.reset(seed=seed)
+        

@@ -17,8 +17,13 @@ class TrainConfig:
         self.iterations = 500
         self.learning_rate = 5e-4
         self.policy_kwargs = dict(net_arch=[256, 256])
-        # not used for now
         self.seed = random.getrandbits(32)
+        self.k_wst = 0.5
+        self.k_reg = 0.2
+        self.attack_budget = 0.5
+        self.wocar_grad_step_size = 5e-4
+        self.wocar_grad_steps = 100
+
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -106,6 +111,26 @@ class TrainConfigBuilder:
     
     def seed(self, value):
         self._config.seed = value
+        return self
+    
+    def k_wst(self, value):
+        self._config.k_wst = value
+        return self
+    
+    def k_reg(self, value):
+        self._config.k_reg = value
+        return self
+    
+    def attack_budget(self, value):
+        self._config.attack_budget = value
+        return self
+    
+    def wocar_grad_step_size(self, value):
+        self._config.wocar_grad_step_size = value
+        return self
+    
+    def wocar_grad_steps(self, value):
+        self._config.wocar_grad_steps = value
         return self
     
     def build(self):
