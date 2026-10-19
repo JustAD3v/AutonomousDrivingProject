@@ -44,46 +44,28 @@ class WocaRDQN:
         self.record = TrainResult(self.config.iterations)
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
+        self._bounded_robust_net = None
+
         # wocaR params
-        self.k_wst = 0.5
-        self.k_reg = 0.2
-        self.attack_bound = 0.5
-        self.grad_step_size = 5e-4
-        self.grad_steps = 100
+        self.k_wst = config.k_wst
+        self.k_reg = config.k_reg
+        self.attack_budget = config.attack_budget
+        self.grad_step_size = config.wocar_grad_step_size
+        self.grad_steps = config.wocar_grad_steps
 
     def epsilon_update(self, epsilon):
       return max(self.config.epsilon_min, epsilon + self.epsilon_step)
       #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
 
-    def optimize_main(self, loss):
-        self.main_net.optimizer.zero_grad()
-        loss.backward()
-        
-        torch.nn.utils.clip_grad_norm_(
-          self.main_net.parameters(),
-          max_norm=10.0
-        )
-        self.main_net.optimizer.step()
-
-    def optimize_woca(self, loss):
-      self.woca_net.optimizer.zero_grad()
-      loss.backward()
-      
-      torch.nn.utils.clip_grad_norm_(
-        self.woca_net.parameters(),
-        max_norm=10.0
-      )
-      self.woca_net.optimizer.step()
-    
-    def optimize_robust(self, loss):
-      self.robust_net.optimizer.zero_grad()
-      loss.backward()
-      
-      torch.nn.utils.clip_grad_norm_(
-        self.robust_net.parameters(),
-        max_norm=10.0
-      )
-      self.robust_net.optimizer.step()
+    def optimize_model(self, loss, model):
+       model.optimizer.zero_grad()
+       loss.backward()
+       
+       torch.nn.utils.clip_grad_norm_(
+         model.parameters(),
+         max_norm=10.0
+       )
+       model.optimizer.step()
 
     def getWocaMinQ(self, subset_actions, states):
       with torch.no_grad():
@@ -119,20 +101,32 @@ class WocaRDQN:
     
     def getSubsetActions(self, states):
       # get lower and upper bound of perturbated states
-      lb_states = torch.tensor(np.add(states, -self.attack_bound), dtype=torch.float32, device=self.device)
-      ub_states = torch.tensor(np.add(states, self.attack_bound), dtype=torch.float32, device=self.device)
+      lb_states = (states - self.attack_budget).to(
+          device=self.device,
+          dtype=torch.float32
+      )
+      ub_states = (states + self.attack_budget).to(
+          device=self.device,
+          dtype=torch.float32
+      )
       # wrap model in auto_LiRPA framework
-      lirpa_model = BoundedModule(self.robust_net, torch.empty_like(states))
-
+      # use _bounded_robust_net as a cache 
+      # to avoid calculating it at every round
+      if self._bounded_robust_net is None:
+          self._bounded_robust_net = BoundedModule(
+              self.robust_net,
+              torch.empty_like(states)
+          )
       # Compute bounds using LiRPA using the given lower and upper bounds.
       norm = float("inf")
-      ptb = PerturbationLpNorm(norm = norm, x_L=lb_states, x_U=ub_states)
+      ptb = PerturbationLpNorm(norm=norm, x_L=lb_states, x_U=ub_states)
       bounded_qvalues = BoundedTensor(states, ptb)
-
       # Compute bounds using CROWN
-      lb_qvalues, ub_qvalues = lirpa_model.compute_bounds(x=(bounded_qvalues,), method='CROWN')
+      lb_qvalues, ub_qvalues = self._bounded_robust_net.compute_bounds(
+          x=(bounded_qvalues,),
+          method='CROWN'
+      )
       # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
-
       # filter actions
       return self.filter_actions(lb_qvalues, ub_qvalues)
 
@@ -149,7 +143,7 @@ class WocaRDQN:
         probs = F.log_softmax(qvalues, dim=1)
 
       # init delta with random pertubration in [-eps; eps]
-      delta = torch.empty_like(states).uniform_(-self.attack_bound, self.attack_bound)
+      delta = torch.empty_like(states).uniform_(-self.attack_budget, self.attack_budget)
 
       # find perturbation delta that maximizes the distance using gradient ascent
       dist = None
@@ -180,8 +174,8 @@ class WocaRDQN:
             # don't include those calculations in the comutational graph
             delta = torch.clamp(
                 delta + grad_step_size * grad,
-                min=-self.attack_bound,
-                max=self.attack_bound
+                min=-self.attack_budget,
+                max=self.attack_budget
             )
         # detach delta from the graph so next gradient calculation 
         # is a fresh new gradient independent from the previous one
@@ -295,7 +289,7 @@ class WocaRDQN:
               loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
               total_loss += loss.item()
               # optimize
-              self.optimize_main(loss)
+              self.optimize_model(loss, self.main_net)
               network_time += time.time() - network_time_start
 
               # ============ TRAIN WOCA NETWORK ============
@@ -308,18 +302,18 @@ class WocaRDQN:
               
               y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
               woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
-              self.optimize_woca(woca_loss)
+              self.optimize_model(woca_loss, self.woca_net)
 
               # ============ CALCULATE REGULARIZATION ============ 
               reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
 
               # ============ TRAIN ROBUST NETWORK ============ 
-              q_target = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
+              q_target = qvalues
               q_woca = self.woca_net.getMaxQ(next_states, self.env.action_space.n, self.device)
               y_robust = rewards + self.config.gamma * (self.k_wst * q_target + (1 - self.k_wst) * q_woca) * (1-dones)
               predicted_robust = self.robust_net.process_batch((states, actions, rewards, next_states, dones), self.device)
               robust_loss = self.robust_net.loss_fn(predicted_robust.squeeze(), y_robust) + self.k_reg * reg_loss
-              self.optimize_robust(robust_loss)
+              self.optimize_model(robust_loss, self.robust_net)
 
             if iteration % self.config.copy_freq == 0:
               self.target_net.load_state_dict(self.main_net.state_dict())
