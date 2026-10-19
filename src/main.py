@@ -10,6 +10,7 @@ from Trainers.TrainerFactory import TrainerFactory
 from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
 from Networks.StateOnlyNN import StateOnlyNN
+from Networks.NetworkFactory import NetworkFactory
 
 from Adversarial.RandomAdversarial import RandomAdversarial
 from Adversarial.FGSMAdversarial import FGSMAdversarial
@@ -80,18 +81,12 @@ if args.seed:
 env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
-    main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
-    target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
-    woca_network = StateOnlyNN(learning_rate=train_config.learning_rate)
-    robust_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    network_factory=NetworkFactory(train_config=train_config, network_type=StateOnlyNN)
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
         trainer_type=TRAINER,
-        main_network=main_network,
-        target_network=target_network,
-        woca_network=woca_network,
-        robust_network=robust_network,
+        network_factory=network_factory,
         policy_str="MlpPolicy",
         seed=train_config.seed
     )
