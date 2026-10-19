@@ -13,7 +13,7 @@ def main():
 
     # 3. Test and Evaluate the Loaded Agent
     print("=== Testing Loaded Agent (5 Episodes) ===")
-    for episode in range(5):
+    for episode in range(10):
         obs, info = env.reset()
         done = truncated = False
         episode_reward = 0
