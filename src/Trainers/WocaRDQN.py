@@ -1,14 +1,16 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import gymnasium as gym
 import highway_env
 import numpy as np
-import time
 
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
 from Trainers.TrainResult import TrainResult
+from Utils.Timer import Timer
+
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
@@ -24,6 +26,8 @@ class WocaRDQN:
                  env_config = None,
                  env = None,
                  use_gpu = False):
+        self.timer = Timer()
+
         if env is not None:
             self.env = env
         else:
@@ -90,7 +94,7 @@ class WocaRDQN:
              i for i in range(len(lb)) 
              # if there is an action j (i != j) with a lower bound lower than ub[i]
              # then this action might be chosen 
-             # because it's qvalue domain covers a part of the domain of another action
+             # because its qvalue domain covers a part of the domain of another action
              # You can think it the opposite way :
              # if all lb of other actions j are greater than ub[i],
              # this action will never be chosen because its qvalue will always be lower
@@ -210,24 +214,42 @@ class WocaRDQN:
       max_dist = self.getDistMax(states, grad_step_size, grad_steps)
       reg = torch.mul(w_states, max_dist)
       return reg.mean()
-      
-    def learn(self) -> TrainResult:
-        start = time.time()
-        env_time = 0
-        network_time = 0
-        predict_time = 0
+
+    @Timer.measure("Prediction calculation")
+    def _predict(self, state):
+        return self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
+
+    @Timer.measure("Environment processing")
+    def _environment_step(self, action):
+        return self.env.step(action)
+
+    @Timer.measure("Network processing")
+    def _train_main_network(self, states, actions, rewards, next_states, dones):
+        # calc y_target for every sample of batch using TARGET NETWORK
+        with torch.no_grad():
+          qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
+        # rewards, dones and qvalues should all be on same device
+        y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+        # calc y_main using MAIN NETWORK (network of the agent)
+        y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
+        # calc loss
+        loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
+        loss_value = loss.item()
+        # optimize
+        self.optimize_model(loss, self.main_net)
+
+        return qvalues, loss_value
+
+    @Timer.measure("Warmup duration")
+    def _warmup(self):
         print("[+] === Warm up starts ===")
         warmup_samples = 0
         while warmup_samples < self.config.warmup_size:
             state, _ = self.env.reset()
             done = False
             while not done:
-                 predict_time_start = time.time()
-                 action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
-                 predict_time += time.time() - predict_time_start
-                 env_time_start = time.time()
-                 new_state, reward, term, trunc, _ = self.env.step(action)
-                 env_time += time.time() - env_time_start
+                 action, _ = self._predict(state)
+                 new_state, reward, term, trunc, _ = self._environment_step(action)
                  done = term | trunc
                  self.r_buffer.push(
                    (
@@ -241,10 +263,31 @@ class WocaRDQN:
                  warmup_samples += 1
                  state = new_state
             print(f"buffer filled with : {warmup_samples}/{self.config.warmup_size}")
-        warmup_duration = time.time()-start
-        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
 
-        start = time.time()
+    @Timer.measure("WOCA network update")
+    def _train_woca_network(self, states, actions, rewards, next_states, dones):
+              subset_actions = self.getSubsetActions(next_states)
+              with torch.no_grad():
+                # no need to build a graph for calculating target
+                # (no backprop is computed)
+                woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
+                y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+
+              y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
+              woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
+              self.optimize_model(woca_loss, self.woca_net)
+
+    @Timer.measure("Robust network update")
+    def _train_robust_network(self, states, actions, rewards, next_states, dones, qvalues, reg_loss):
+              q_target = qvalues
+              q_woca = self.woca_net.getMaxQ(next_states, self.env.action_space.n, self.device)
+              y_robust = rewards + self.config.gamma * (self.k_wst * q_target + (1 - self.k_wst) * q_woca) * (1-dones)
+              predicted_robust = self.robust_net.process_batch((states, actions, rewards, next_states, dones), self.device)
+              robust_loss = self.robust_net.loss_fn(predicted_robust.squeeze(), y_robust) + self.k_reg * reg_loss
+              self.optimize_model(robust_loss, self.robust_net)
+
+    @Timer.measure("Training duration")
+    def _train(self):
         print("[+] === Training starts ===")
         iteration = 0
         episode_count = 0
@@ -255,12 +298,8 @@ class WocaRDQN:
           episode_return = 0
           nb_steps = 0
           while not done:
-            predict_time_start = time.time()
-            action, _ = self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
-            predict_time += time.time() - predict_time_start
-            env_time_start = time.time()
-            new_state, reward, term, trunc, _ = self.env.step(action)
-            env_time += time.time() - env_time_start
+            action, _ = self._predict(state)
+            new_state, reward, term, trunc, _ = self._environment_step(action)
             episode_return += reward
             done = term | trunc
             nb_steps += 1
@@ -278,42 +317,17 @@ class WocaRDQN:
               # uniform draw of a batch
               states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
-              network_time_start = time.time()
-              with torch.no_grad():
-                qvalues = self.target_net.getMaxQ(next_states, self.env.action_space.n, self.device)
-              # rewards, dones and qvalues should all be on same device
-              y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
-              # calc y_main using MAIN NETWORK (network of the agent)
-              y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
-              # calc loss
-              loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
-              total_loss += loss.item()
-              # optimize
-              self.optimize_model(loss, self.main_net)
-              network_time += time.time() - network_time_start
+              qvalues, loss_value = self._train_main_network(states, actions, rewards, next_states, dones)
+              total_loss += loss_value
 
               # ============ TRAIN WOCA NETWORK ============
-              subset_actions = self.getSubsetActions(next_states)
-              with torch.no_grad():
-                # no need to build a graph for calculating target
-                # (no backprop is computed)
-                woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
-                y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
-              
-              y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
-              woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
-              self.optimize_model(woca_loss, self.woca_net)
+              self._train_woca_network(states, actions, rewards, next_states, dones)
 
               # ============ CALCULATE REGULARIZATION ============ 
               reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
 
               # ============ TRAIN ROBUST NETWORK ============ 
-              q_target = qvalues
-              q_woca = self.woca_net.getMaxQ(next_states, self.env.action_space.n, self.device)
-              y_robust = rewards + self.config.gamma * (self.k_wst * q_target + (1 - self.k_wst) * q_woca) * (1-dones)
-              predicted_robust = self.robust_net.process_batch((states, actions, rewards, next_states, dones), self.device)
-              robust_loss = self.robust_net.loss_fn(predicted_robust.squeeze(), y_robust) + self.k_reg * reg_loss
-              self.optimize_model(robust_loss, self.robust_net)
+              self._train_robust_network(states, actions, rewards, next_states, dones, qvalues, reg_loss)
 
             if iteration % self.config.copy_freq == 0:
               self.target_net.load_state_dict(self.main_net.state_dict())
@@ -329,11 +343,32 @@ class WocaRDQN:
           self.record.add_epsilon(self.config.epsilon)
           self.record.register_episode_count(episode_count)
 
-        training_duration = time.time()-start
+    def learn(self) -> TrainResult:
+        self.timer.reset()
+
+        self._warmup()
+        warmup_duration = self.timer.counters["Warmup duration"]
+        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
+
+        self._train()
+
+        training_duration = self.timer.counters["Training duration"]
+
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
-      
-        print(f"[+] Environment processing duration : = {env_time}s")
-        print(f"[+] Network processing duration : = {network_time}s")
-        print(f"[+] Prediction calculation duration : = {predict_time}s")
+
+        print(f"[+] Environment processing duration : = {self.timer.counters['Environment processing']}s")
+        print(f"[+] Network processing duration : = {self.timer.counters['Network processing']}s")
+        print(f"[+] Prediction calculation duration : = {self.timer.counters['Prediction calculation']}s")
+
+        print("[+] === Detailed timing breakdown ===")
+        for name, elapsed in self.timer.counters.items():
+            if name not in (
+                "Warmup duration",
+                "Training duration",
+                "Environment processing",
+                "Network processing",
+                "Prediction calculation"
+            ):
+                print(f"{name}: {elapsed:.3f}s")
 
         return self.record
