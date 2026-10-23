@@ -23,6 +23,9 @@ class TrainConfig:
         self.attack_budget = 0.5
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
+        self.ppo_update_steps = 4
+        self.ppo_clip_epsilon = 0.2
+        self.ppo_lm = 0.8
 
 
     def to_json(self):
@@ -131,6 +134,18 @@ class TrainConfigBuilder:
     
     def wocar_grad_steps(self, value):
         self._config.wocar_grad_steps = value
+        return self
+    
+    def ppo_clip_epsilon(self, value):
+        self._config.ppo_clip_epsilon = value
+        return self
+    
+    def ppo_update_steps(self, value):
+        self._config.ppo_update_steps = value
+        return self
+    
+    def ppo_lm(self, value):
+        self._config.ppo_lm = value
         return self
     
     def build(self):
