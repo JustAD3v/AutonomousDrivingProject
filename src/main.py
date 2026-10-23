@@ -9,7 +9,10 @@ from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainerFactory import TrainerFactory
 from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
+from Policies.PPOPolicy import PPOPolicy
 from Networks.StateOnlyNN import StateOnlyNN
+from Networks.ActorNetwork import ActorNetwork
+from Networks.CriticNetwork import CriticNetwork
 from Networks.NetworkFactory import NetworkFactory
 
 from Adversarial.RandomAdversarial import RandomAdversarial
@@ -107,26 +110,38 @@ fast_env_config = {
 }
 
 TRAIN = args.train
-USE_CUSTOM = args.use_custom
-TRAINER = args.trainer
+MODEL_TYPE = args.model_type
 NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
 
+# train_config = (
+#     TrainConfigBuilder()
+#     .epsilon_start(1.0)
+#     .epsilon_min(0.01)
+#     .epsilon_decay(0.997)
+#     .buffer_size(15000)
+#     .warmup_size(400)
+#     .batch_size(32)
+#     .gamma(0.95)
+#     .copy_freq(50)
+#     .iterations(200)
+#     .exploration_frac(0.1)
+#     .learning_rate(5e-4)
+#     .train_freq(1)
+#     .gradient_steps(1)
+#     .policy_kwargs(dict(net_arch=[256, 256]))
+#     .build()
+# )
+
+# PPO
 train_config = (
     TrainConfigBuilder()
-    .epsilon_start(1.0)
-    .epsilon_min(0.01)
-    .epsilon_decay(0.997)
-    .buffer_size(15000)
-    .warmup_size(400)
-    .batch_size(32)
+    .buffer_size(600)
     .gamma(0.95)
-    .copy_freq(50)
-    .iterations(200)
-    .exploration_frac(0.1)
+    .ppo_lm(0.85)
+    .ppo_critic_update_steps(10)
+    .ppo_actor_update_steps(10)
+    .iterations(30)
     .learning_rate(5e-4)
-    .train_freq(1)
-    .gradient_steps(1)
-    .policy_kwargs(dict(net_arch=[256, 256]))
     .build()
 )
 
@@ -141,34 +156,44 @@ if args.seed:
 env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
-    network_factory=NetworkFactory(train_config=train_config, network_type=StateOnlyNN)
+    if MODEL_TYPE == "ppo":
+        # factory for PPO
+        ppo_net_types = {
+            "actor": ActorNetwork,
+            "critic": CriticNetwork
+        }
+        network_factory=NetworkFactory(train_config=train_config, network_types=ppo_net_types)
+    else:
+        # factory for DQN
+        network_factory=NetworkFactory(train_config=train_config, network_types=StateOnlyNN)
+    
     trainer = TrainerFactory.create_trainer(
         env=env,
         config=train_config,
-        trainer_type=TRAINER,
+        trainer_type=MODEL_TYPE,
         network_factory=network_factory,
         policy_str="MlpPolicy",
         seed=train_config.seed
     )
     results = trainer.learn()
     trainer.save(NETWORK_FILE)
-    if results is not None:
-        results.plot()
+    # if results is not None:
+    #     results.plot()
 
 else:
-    if USE_CUSTOM:
-        model = StateOnlyNN()
-        model.load_state_dict(torch.load(NETWORK_FILE))
-        policy = CustomPolicy(network=model, action_space=env.action_space)
-    else:
-        policy = DQN.load(NETWORK_FILE)
-
-    eval_config = {
-        **fast_env_config,
-        "lanes_count": 3,
-        "vehicles_density": 1.3,
-        "duration": 30
-    }
+    match MODEL_TYPE:
+        case "dqn" | "wocar":
+            model = StateOnlyNN()
+            model.load_state_dict(torch.load(NETWORK_FILE))
+            policy = CustomPolicy(network=model, action_space=env.action_space)
+        case "ppo":
+            model = ActorNetwork()
+            model.load_state_dict(torch.load(NETWORK_FILE))
+            policy = PPOPolicy(network=model, action_space=env.action_space)
+        case "sb3_dqn":
+            policy = DQN.load(NETWORK_FILE)
+        case _:
+            policy = DQN.load(NETWORK_FILE)
 
     render_mode = None
     render_delay = 0.0
