@@ -2,7 +2,7 @@ import torch
 import random
 import numpy as np
 
-class DQNWrapper:
+class TrainerWrapper:
     def __init__(self, trainer, trainer_type="dqn", config=None, seed=random.randint(0, 2**32 - 1)):
         self.trainer = trainer
         self.trainer_type = trainer_type
@@ -23,6 +23,8 @@ class DQNWrapper:
                 torch.save(self.trainer.target_net.state_dict(), path)
             case "wocar":
                 torch.save(self.trainer.robust_net.state_dict(), path)
+            case "ppo":
+                torch.save(self.trainer.actor_network.state_dict(), path)                
             case _:
                 self.trainer.save(path)
         print(f"[+] Target network saved to file : {path}")
@@ -32,6 +34,9 @@ class DQNWrapper:
         match self.trainer_type:
             case "sb3_dqn":
                 return self.trainer.predict(state, deterministic=deterministic)
+            case "ppo":
+                action, _ = self.trainer.policy.predict(state)
+                return action 
             case _:
                 return self.trainer.policy.predict(state, epsilon=0.0)
 
