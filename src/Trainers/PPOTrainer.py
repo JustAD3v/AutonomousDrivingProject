@@ -102,7 +102,8 @@ class PPOTrainer:
                                 self.config.gamma, 
                                 self.config.ppo_lm)
         self.record = TrainResult(self.config.iterations)
-        
+
+    @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
        loss.backward()

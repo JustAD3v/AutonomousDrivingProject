@@ -25,10 +25,16 @@ class PPOBuffer:
         self.ptr += 1
         self.full = self.ptr >= self.buffer_size
 
-    def merge(self, buffer_list):
-        for worker_buffer in buffer_list:
-            for sample in worker_buffer.buffer:
-                self.push(sample)
+    def merge(self, PPOBuffer_list):
+        self.advantage_buffer = np.array([])
+        self.return_buffer = np.array([])
+        for worker_PPOBuffer in PPOBuffer_list:
+            self.buffer += worker_PPOBuffer.buffer
+            self.advantage_buffer = np.concatenate((self.advantage_buffer, 
+                                                    worker_PPOBuffer.advantage_buffer))
+            self.return_buffer = np.concatenate((self.return_buffer, 
+                                                worker_PPOBuffer.return_buffer))
+            self.ptr += worker_PPOBuffer.ptr
 
     def finish_episode(self, extra_critic_value):
         segment_len = self.ptr - self.episode_start
