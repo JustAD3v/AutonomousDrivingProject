@@ -15,17 +15,77 @@ from Networks.NetworkFactory import NetworkFactory
 from Adversarial.RandomAdversarial import RandomAdversarial
 from Adversarial.FGSMAdversarial import FGSMAdversarial
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--train", action="store_true", default=False)
-parser.add_argument("--adversarial", action="store_true", default=False)
-parser.add_argument("--use_custom", action="store_true", default=False)
-parser.add_argument("--trainer", type=str, choices=["dqn", "sb3_dqn", "wocar"], default="dqn")
-parser.add_argument("--net_file", type=str)
-parser.add_argument("--config", type=str)
-parser.add_argument("--render_delay", type=float)
-parser.add_argument("--render_human", action="store_true", default=False)
-parser.add_argument("--seed", type=int)
-parser.add_argument("--attack_bound", type=float)
+parser = argparse.ArgumentParser(
+    description=(
+        "Train or evaluate a reinforcement-learning agent in the "
+        "highway environment. Evaluation is the default; use --train "
+        "to train and save a model."
+    ),
+    epilog=(
+        "Examples:\n"
+        "  python src/main.py --train --model_type ppo --net_file models\\ppo-agent.pt\n"
+        "  python src/main.py --model_type dqn --net_file models\\targetNetwork_trained --render_human\n"
+        "  python src/main.py --model_type dqn --net_file models\\targetNetwork_trained --adversarial --attack_bound 0.1"
+    ),
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+)
+parser.add_argument(
+    "--train",
+    action="store_true",
+    default=False,
+    help="Train the selected model instead of evaluating it",
+)
+parser.add_argument(
+    "--model_type",
+    type=str,
+    choices=["dqn", "sb3_dqn", "wocar", "ppo"],
+    default="dqn",
+    metavar="{dqn,sb3_dqn,wocar,ppo}",
+)
+parser.add_argument(
+    "--net_file",
+    type=str,
+    metavar="PATH",
+    help=(
+        "Path of model file to load for evaluation or save after training "
+        "(default: ./models/targetNetwork_trained)."
+    ),
+)
+parser.add_argument(
+    "--config",
+    type=str,
+    metavar="PATH",
+    help="JSON file with training configuration values that override the defaults.",
+)
+parser.add_argument(
+    "--render_delay",
+    type=float,
+    metavar="SECONDS",
+    help="Pause between evaluation steps in seconds (used with evaluation).",
+)
+parser.add_argument(
+    "--render_human",
+    action="store_true",
+    default=False,
+    help="Show a human-rendered environment window during evaluation.",
+)
+parser.add_argument(
+    "--seed",
+    type=int,
+    help="Set the random seed for training or evaluation.",
+)
+parser.add_argument(
+    "--adversarial",
+    action="store_true",
+    default=False,
+    help="During evaluation, perturb observations with adversarial method.",
+)
+parser.add_argument(
+    "--attack_bound",
+    type=float,
+    metavar="FLOAT",
+    help="Maximum perturbation bound during adversarial evaluation (default: 0.2).",
+)
 
 args = parser.parse_args()
 
