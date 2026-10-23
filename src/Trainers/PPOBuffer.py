@@ -26,28 +26,30 @@ class PPOBuffer:
         self.full = self.ptr >= self.buffer_size
 
     def finish_episode(self, extra_critic_value):
-        ep_slice = slice(self.episode_start, self.ptr)
-        # calculate the advantages using GAE method
-        advantages = []
-        returns = []
-        for start in range(self.episode_start, self.ptr):
-            episode_slice = slice(start, self.ptr)
-            episode_steps = self.buffer[episode_slice]
-            rewards = np.array([e[2] for e in episode_steps])
-            critic_values = np.array([e[-1] for e in episode_steps] + [extra_critic_value])
-            delta = rewards + self.gamma * critic_values[1:] - critic_values[:-1]
-            lm_factors = np.array([pow(self.lm, i) for i in range(self.ptr - start)])
-            gamma_factors = np.array([pow(self.gamma, i) for i in range(self.ptr - start)])
-            advantage = np.sum(delta * gamma_factors * lm_factors)
-            return_val = np.sum(gamma_factors * rewards)
-            advantages.append(advantage)
-            returns.append(return_val)
-        self.return_buffer[ep_slice] = returns
-        self.advantage_buffer[ep_slice] = advantages
-        # calculate return
-        gamma_factors = np.array([pow(self.gamma, i) for i in range(self.ptr - self.episode_start)])
-        episode_steps = self.buffer[ep_slice]
-        rewards = np.array([e[2] for e in episode_steps])
+        segment_len = self.ptr - self.episode_start
+        segment_slice = slice(self.episode_start, self.ptr)
+        segment = self.buffer[segment_slice]
+
+        advantages = np.zeros(segment_len)
+        returns = np.zeros(segment_len)
+        
+        rewards = np.array([e[2] for e in segment])
+        critic_values = np.array([e[-1] for e in segment] + [extra_critic_value])        
+
+        # calculate the advantages using GAE method + calculate return
+        gae = 0
+        total_return = 0
+        # backward calculation
+        for t in reversed(range(segment_len)):
+            delta = rewards[t] + self.gamma * critic_values[t+1] - critic_values[t] 
+            gae = delta + self.lm * self.gamma * gae
+            total_return = rewards[t] + self.gamma * total_return 
+            advantages[t] = gae
+            returns[t] = total_return
+
+        self.return_buffer[segment_slice] = returns
+        self.advantage_buffer[segment_slice] = advantages
+        self.episode_start = self.ptr
          
         
     def get_batch(self):

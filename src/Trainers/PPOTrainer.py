@@ -1,4 +1,3 @@
-# big shoutout to johnny code the goaaaat
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,7 +30,8 @@ class PPOTrainer:
         self.config = config
         self.policy = policy
         self.clip_epsilon = self.config.ppo_clip_epsilon
-        self.update_steps = self.config.ppo_update_steps
+        self.actor_update_steps = self.config.ppo_actor_update_steps
+        self.critic_update_steps = self.config.ppo_critic_update_steps
         self.actor_network = actor_network
         self.critic_network = critic_network
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
@@ -113,9 +113,7 @@ class PPOTrainer:
                                 device=self.device
                             )
                             extra_critic_value = self.critic_network(next_state_tensor).item()
-
-                        print("extra:", extra_critic_value)
-
+    
                     self.buffer.finish_episode(extra_critic_value)
 
                     print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
@@ -146,18 +144,14 @@ class PPOTrainer:
             # Normalize advantages ?
             
             # ============ OPTIMIZE CRITIC ===============
-            critic_values = self.critic_network(states).squeeze(-1)
+            for _ in range(self.critic_update_steps):
+                critic_values = self.critic_network(states).squeeze(-1)
 
-            assert critic_values.shape == returns.shape, (
-                f"Critic predictions {critic_values.shape} "
-                f"do not match returns {returns.shape}"
-            )
-
-            loss = self.critic_network.loss_fn(critic_values, returns)
-            self.optimize_model(loss, self.critic_network)
+                loss = self.critic_network.loss_fn(critic_values, returns)
+                self.optimize_model(loss, self.critic_network)
 
             # ============ OPTIMIZE ACTOR =================
-            for _ in range(self.update_steps):
+            for _ in range(self.actor_update_steps):
                 action_values = self.actor_network(states)
                 # Categorical applies softmax on network output
                 # to get a probability distribution from the output vector

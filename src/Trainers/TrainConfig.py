@@ -23,7 +23,8 @@ class TrainConfig:
         self.attack_budget = 0.5
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
-        self.ppo_update_steps = 4
+        self.ppo_actor_update_steps = 4
+        self.ppo_critic_update_steps = 4
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
 
@@ -140,8 +141,12 @@ class TrainConfigBuilder:
         self._config.ppo_clip_epsilon = value
         return self
     
-    def ppo_update_steps(self, value):
-        self._config.ppo_update_steps = value
+    def ppo_actor_update_steps(self, value):
+        self._config.ppo_actor_update_steps = value
+        return self
+    
+    def ppo_critic_update_steps(self, value):
+        self._config.ppo_critic_update_steps = value
         return self
     
     def ppo_lm(self, value):
