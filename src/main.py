@@ -142,7 +142,7 @@ def main():
         .ppo_lm(0.85)
         .ppo_critic_update_steps(10)
         .ppo_actor_update_steps(10)
-        .iterations(4)
+        .iterations(25)
         .learning_rate(5e-4)
         .build()
     )

@@ -11,16 +11,43 @@ from Trainers.PPOBuffer import PPOBuffer
 from Trainers.TrainResult import TrainResult
 from Utils.Timer import Timer
 
+# worker states
+_WORKER_POLICY = None
+_WORKER_CRITIC = None
+_WORKER_ENV_NAME = None
+_WORKER_ENV_CONFIG = None
+_WORKER_DEVICE = None
+
 PARALLEL = True
 
-def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
-    env = gym.make(env_name, config=env_config)
+def init_collector(env_name,
+                    env_config,
+                    policy,
+                    critic_network,
+                    device):
+    global _WORKER_POLICY
+    global _WORKER_CRITIC
+    global _WORKER_ENV_NAME
+    global _WORKER_ENV_CONFIG
+    global _WORKER_DEVICE
+
+    # Save worker configuration
+    _WORKER_ENV_NAME = env_name
+    _WORKER_ENV_CONFIG = env_config
+    _WORKER_DEVICE = device
+
+    # Keep the policy wrapper and critic available
+    _WORKER_POLICY = policy
+    _WORKER_CRITIC = critic_network
+
+def collector_worker(buffer_size, gamma, ppo_lm):
+    env = gym.make(_WORKER_ENV_NAME, config=_WORKER_ENV_CONFIG)
     state, _ = env.reset()
-    buffer = PPOBuffer(buffer_size, device, gamma, ppo_lm)
+    buffer = PPOBuffer(buffer_size, _WORKER_DEVICE, gamma, ppo_lm)
     episode_return = 0.0
     episode_length = 0
     for _ in range(buffer_size):
-        action, log_action_prob = policy.predict(state, device=device)
+        action, log_action_prob = _WORKER_POLICY.predict(state, device=_WORKER_DEVICE)
         next_state, reward, term, trunc, _ = env.step(action)
         episode_return += reward
         episode_length += 1
@@ -29,9 +56,9 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
             state_tensor = torch.as_tensor(
                 state_flat,
                 dtype=torch.float32,
-                device=device
+                device=_WORKER_DEVICE
             )
-            critic_value = critic_network(state_tensor).item()
+            critic_value = _WORKER_CRITIC(state_tensor).item()
         # Store a detached scalar old log probability.
         if torch.is_tensor(log_action_prob):
             log_action_prob = log_action_prob.detach().item()
@@ -52,9 +79,9 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
                     next_state_tensor = torch.as_tensor(
                         next_state_array,
                         dtype=torch.float32,
-                        device=device
+                        device=_WORKER_DEVICE
                     )
-                    extra_critic_value = critic_network(next_state_tensor).item()
+                    extra_critic_value = _WORKER_CRITIC(next_state_tensor).item()
             buffer.finish_episode(extra_critic_value)
             print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
             episode_return = 0.0
@@ -102,7 +129,8 @@ class PPOTrainer:
                                 self.config.gamma, 
                                 self.config.ppo_lm)
         self.record = TrainResult(self.config.iterations)
-        
+
+    @Timer.measure("Optimize Time")
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
        loss.backward()
@@ -133,29 +161,44 @@ class PPOTrainer:
     
     @Timer.measure("Training duration")
     def _train(self):
+        # The policy must use this exact actor network.
+        assert self.policy.network is self.actor_network
+
+        if PARALLEL:
+            print("using parallel !")
+            # Share CPU parameter and buffer storage.
+            self.actor_network.share_memory()
+            self.critic_network.share_memory()
+            
+            nworkers = self.rounded_nworkers()
+            buff_size = self.config.buffer_size // nworkers
+
+            executor = ProcessPoolExecutor(
+                max_workers=nworkers,
+                initializer=init_collector,
+                initargs=(
+                    self.env_name,
+                    self.env_config,
+                    self.policy,
+                    self.critic_network,
+                    self.device,
+                ),
+            )
+        
         print("[+] === Training starts ===")
         iteration = 0
 
         while iteration < self.config.iterations:
             
             if PARALLEL:
-                print("using parallel !")
-                nworkers = self.rounded_nworkers()
-                buff_size = self.config.buffer_size // nworkers
-                with ProcessPoolExecutor(max_workers=nworkers) as executor:
-                    futures = [executor.submit(collector_worker, 
-                                             self.env_name, 
-                                             self.env_config, 
-                                             buff_size, 
-                                             self.policy, 
-                                             self.device, 
-                                             self.critic_network, 
-                                             self.config.gamma, 
-                                             self.config.ppo_lm)
-                                for _ in range(nworkers)
-                            ]
-                    res = [f.result() for f in futures]
-                    self.buffer.merge(res)
+                futures = [executor.submit(collector_worker, 
+                                         buff_size, 
+                                         self.config.gamma, 
+                                         self.config.ppo_lm)
+                            for _ in range(nworkers)
+                        ]
+                res = [f.result() for f in futures]
+                self.buffer.merge(res)
             else:
                 state, _ = self.env.reset()
                 episode_return = 0.0
@@ -266,7 +309,9 @@ class PPOTrainer:
             self.buffer.reset()
             iteration += 1
             print(f"[*] Iteration Finished ({iteration}/{self.config.iterations})")
-    
+        if PARALLEL:
+            executor.shutdown(wait=True)
+
     def learn(self) -> TrainResult:
         self.timer.reset()
         self._train()
