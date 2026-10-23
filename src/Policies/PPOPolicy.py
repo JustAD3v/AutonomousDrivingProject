@@ -7,9 +7,10 @@ class PPOPolicy:
         self.network = network
         self.action_space = action_space
 
-    def predict(self, state, device="cpu"):
+    def predict(self, state, device="cpu", deterministic=True):
         with torch.no_grad():
-            state_tensor = torch.tensor(state, dtype=torch.float32).to(device)
+            state_flat = np.asarray(state, dtype=np.float32).flatten()
+            state_tensor = torch.tensor(state_flat, dtype=torch.float32).to(device)
             output = self.network(state_tensor)
             # Categorical applies softmax on network output
             # to get a probability distribution from the output vector
