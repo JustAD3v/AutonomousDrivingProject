@@ -11,12 +11,9 @@ class PPOPolicy:
         with torch.no_grad():
             state_flat = np.asarray(state, dtype=np.float32).flatten()
             state_tensor = torch.tensor(state_flat, dtype=torch.float32).to(device)
-            output = self.network(state_tensor)
-            # Categorical applies softmax on network output
-            # to get a probability distribution from the output vector
-            # it also wraps it into an interface that allows for
-            # sampling that distribution
-            # and finding the log_prob for a given action
-            distribution = torch.distributions.Categorical(logits=output)
+            distribution = self.network.distribution(state_tensor)
             action = distribution.sample()
+        if self.network.continuous:
+            # the environment clips the action to its bounds, the unclipped sample is kept for the log_prob
+            return action.cpu().numpy(), distribution.log_prob(action)
         return action.item(), distribution.log_prob(action)

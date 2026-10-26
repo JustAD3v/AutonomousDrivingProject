@@ -87,8 +87,9 @@ class PPOTrainer:
             self.env = gym.make(env_name, config=env_config)
 
         self.env_name = env_name
-        self.env_config = env_config
-            
+        # parallel workers build their own env, they must use the same config (e.g. action type)
+        self.env_config = env_config if env_config is not None else self.env.unwrapped.config
+
         self.config = config
         self.policy = policy
         self.clip_epsilon = self.config.ppo_clip_epsilon
@@ -227,7 +228,7 @@ class PPOTrainer:
                 for minibatch in minibatches:
                     states, actions, old_log_probs, advantages, returns = minibatch
                     states = states.float()
-                    actions = actions.long()
+                    actions = actions.float() if actions.is_floating_point() else actions.long()
                     old_log_probs = old_log_probs.float().detach()
                     advantages = advantages.float()
                     returns = returns.float()
@@ -240,13 +241,7 @@ class PPOTrainer:
                     self.optimize_model(loss, self.critic_network)
 
                 # ============ OPTIMIZE ACTOR =================
-                    action_values = self.actor_network(states)
-                    # Categorical applies softmax on network output
-                    # to get a probability distribution from the output vector
-                    # it also wraps it into an interface that allows for
-                    # sampling that distribution
-                    # and finding the log_prob for a given action
-                    distribution = torch.distributions.Categorical(logits=action_values)
+                    distribution = self.actor_network.distribution(states)
                     current_log_probs = distribution.log_prob(actions)
 
                     ratio = torch.exp(current_log_probs - old_log_probs)
