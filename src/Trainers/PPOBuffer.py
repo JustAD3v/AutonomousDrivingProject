@@ -43,13 +43,18 @@ class PPOBuffer:
 
         advantages = np.zeros(segment_len)
         returns = np.zeros(segment_len)
-        
+
         rewards = np.array([e[2] for e in segment])
         critic_values = np.array([e[-1] for e in segment] + [extra_critic_value])        
 
         # calculate the advantages using GAE method + calculate return
         gae = 0
-        total_return = 0
+
+        # bootstrap rewards with the extra critic value as done in spinning up library
+        # The extra critic value is used as an estimator for futur rewards 
+        # starting from the last state (the one which was truncated) 
+        total_return = extra_critic_value
+        
         # backward calculation
         for t in reversed(range(segment_len)):
             delta = rewards[t] + self.gamma * critic_values[t+1] - critic_values[t] 
