@@ -24,7 +24,9 @@ class TrainerWrapper:
             case "wocar":
                 torch.save(self.trainer.robust_net.state_dict(), path)
             case "ppo":
-                torch.save(self.trainer.actor_network.state_dict(), path)                
+                torch.save(self.trainer.actor_network.state_dict(), path)
+            case "wocar_ppo":
+                torch.save(self.trainer.robust_actor_network.state_dict(), path)
             case _:
                 self.trainer.save(path)
         print(f"[+] Target network saved to file : {path}")
@@ -34,7 +36,7 @@ class TrainerWrapper:
         match self.trainer_type:
             case "sb3_dqn":
                 return self.trainer.predict(state, deterministic=deterministic)
-            case "ppo":
+            case "ppo" | "wocar_ppo":
                 action, _ = self.trainer.policy.predict(state)
                 return self.trainer.policy.to_env_action(action)
             case _:

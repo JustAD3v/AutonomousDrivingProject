@@ -43,9 +43,9 @@ def main():
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["dqn", "sb3_dqn", "wocar", "ppo"],
+        choices=["dqn", "sb3_dqn", "wocar", "ppo", "wocar_ppo"],
         default="dqn",
-        metavar="{dqn,sb3_dqn,wocar,ppo}",
+        metavar="{dqn,sb3_dqn,wocar,ppo,wocar_ppo}",
     )
     parser.add_argument(
         "--net_file",
@@ -91,7 +91,6 @@ def main():
         metavar="FLOAT",
         help="Maximum perturbation bound during adversarial evaluation (default: 0.2).",
     )
-
     parser.add_argument(
         "--continuous",
         action="store_true",
@@ -171,11 +170,13 @@ def main():
     env = gym.make("highway-fast-v0", config=env_config)
 
     if TRAIN:
-        if MODEL_TYPE == "ppo":
+        if MODEL_TYPE in ("ppo", "wocar_ppo"):
             # factory for PPO
             ppo_net_types = {
                 "actor": ActorNetwork,
-                "critic": CriticNetwork
+                "critic": CriticNetwork,
+                # the worst-case network is a Q network, as in the DQN version
+                "woca": StateOnlyNN
             }
             ppo_net_configs = {
                 "actor": {"out_features": env.action_space.shape[0], "continuous": True}
@@ -204,7 +205,7 @@ def main():
                 model = StateOnlyNN()
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = CustomPolicy(network=model, action_space=env.action_space)
-            case "ppo":
+            case "ppo" | "wocar_ppo":
                 if train_config.ppo_continuous:
                     model = ActorNetwork(out_features=env.action_space.shape[0], continuous=True)
                 else:

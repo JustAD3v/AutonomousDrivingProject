@@ -70,6 +70,26 @@ class TrainerFactory:
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
+            case "wocar_ppo":
+                from Trainers.WocaRPPO import WocaRPPO
+                from Policies.PPOPolicy import PPOPolicy
+
+                actor_network = network_factory.create("actor")
+                critic_network = network_factory.create("critic")
+                woca_network = network_factory.create("woca")
+
+                policy = PPOPolicy(network=actor_network, action_space=env.action_space)
+
+                trainer = WocaRPPO(
+                    config=config,
+                    actor_network=actor_network,
+                    critic_network=critic_network,
+                    woca_network=woca_network,
+                    policy=policy,
+                    env=env
+                )
+                return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
+
             case _:
                 from stable_baselines3 import DQN
 
