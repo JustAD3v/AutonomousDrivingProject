@@ -2,7 +2,7 @@ import argparse
 
 import torch
 import gymnasium as gym
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainConfig import TrainConfigSweep
@@ -42,7 +42,7 @@ def main():
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo"],
+        choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo", "sb3-ppo"],
         default="dqn",
         metavar="{dqn,sb3_dqn,wocar_dqn,ppo,wocar_ppo}",
     )
@@ -225,6 +225,9 @@ def main():
                 policy = PPOPolicy(network=model, action_space=env.action_space)
             case "sb3_dqn":
                 policy = DQN.load(NETWORK_FILE)
+            case "sb3-ppo":
+                policy = PPO.load(NETWORK_FILE)
+
             case _:
                 policy = DQN.load(NETWORK_FILE)
 

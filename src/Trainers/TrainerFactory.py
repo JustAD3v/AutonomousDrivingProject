@@ -95,6 +95,21 @@ class TrainerFactory:
                     env=env
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
+            case "sb3-ppo":
+                from stable_baselines3 import PPO
+                from stable_baselines3.common.env_util import make_vec_env
+
+                # Create vectorized environment using your config's n_envs
+                vec_env = make_vec_env(
+                    env_id="highway-fast-v0",  # or your environment getter
+                    n_envs=config.n_envs,
+                    seed=seed
+                )
+
+                ppo_kwargs = config.to_ppo_kwargs()
+                ppo_model = PPO("MlpPolicy", vec_env, **ppo_kwargs)
+                return TrainerWrapper(trainer=ppo_model, trainer_type=trainer_type, config=config, seed=seed)
+
             
             case "ppo":
                 from Trainers.PPOTrainer import PPOTrainer

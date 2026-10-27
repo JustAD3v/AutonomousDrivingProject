@@ -14,6 +14,16 @@ class TrainerWrapper:
             case "sb3_dqn":
                 self.trainer.learn(total_timesteps=self.config.iterations)
                 return None
+                #case for sb3-ppo added here
+            case "sb3-ppo":
+                self.trainer.learn(total_timesteps=self.config.total_timesteps)
+                return None
+                #It gave errior when having parameter for this function so i removed it, maybe readd idk i could misundertand something. Dont know what happened
+            #case "ppo":
+                #self.trainer.learn(total_timesteps=self.config.total_timesteps)
+            case "ppo":
+                self.trainer.learn()
+                return None
             case _:
                 return self.trainer.learn()
 
@@ -34,7 +44,7 @@ class TrainerWrapper:
 
     def predict(self, state, deterministic=True):
         match self.trainer_type:
-            case "sb3_dqn":
+            case "sb3_dqn" | "ppo":
                 return self.trainer.predict(state, deterministic=deterministic)
             case "ppo" | "wocar_ppo":
                 action, _ = self.trainer.policy.predict(state)
