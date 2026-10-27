@@ -23,7 +23,14 @@ class TrainConfig:
         self.attack_budget = 0.5
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
-
+        self.ppo_actor_update_steps = 4
+        self.ppo_critic_update_steps = 4
+        self.ppo_update_epochs = 4
+        self.ppo_clip_epsilon = 0.2
+        self.ppo_lm = 0.8
+        self.ppo_nworkers = 8
+        self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
+        self.ppo_continuous = False
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -61,12 +68,20 @@ class TrainConfigBuilder:
         self._config.epsilon = self._config.epsilon_start
         return self
     
+    def exploration_frac(self, value):
+        self._config.exploration_frac = value
+        return self
+    
     def epsilon_decay(self, value):
         self._config.epsilon_decay = value
         return self
     
     def epsilon_min(self, value):
         self._config.epsilon_min = value
+        return self
+    
+    def buffer_size(self, value):
+        self._config.buffer_size = value
         return self
     
     def warmup_size(self, value):
@@ -81,36 +96,16 @@ class TrainConfigBuilder:
         self._config.copy_freq = value
         return self
     
-    def iterations(self, value):
-        self._config.iterations = value
-        return self
-
-    def buffer_size(self, value):
-        self._config.buffer_size = value
-        return self
-
-    def learning_rate(self, value):
-        self._config.learning_rate = value
-        return self
-
     def train_freq(self, value):
         self._config.train_freq = value
         return self
-
-    def gradient_steps(self, value):
-        self._config.gradient_steps = value
-        return self
-
-    def policy_kwargs(self, value):
-        self._config.policy_kwargs = value
+    
+    def iterations(self, value):
+        self._config.iterations = value
         return self
     
-    def exploration_frac(self, value):
-        self._config.exploration_frac = value
-        return self
-    
-    def seed(self, value):
-        self._config.seed = value
+    def learning_rate(self, value):
+        self._config.learning_rate = value
         return self
     
     def k_wst(self, value):
@@ -131,6 +126,50 @@ class TrainConfigBuilder:
     
     def wocar_grad_steps(self, value):
         self._config.wocar_grad_steps = value
+        return self
+    
+    def ppo_actor_update_steps(self, value):
+        self._config.ppo_actor_update_steps = value
+        return self
+    
+    def ppo_critic_update_steps(self, value):
+        self._config.ppo_critic_update_steps = value
+        return self
+    
+    def ppo_update_epochs(self, value):
+        self._config.ppo_update_epochs = value
+        return self
+    
+    def ppo_clip_epsilon(self, value):
+        self._config.ppo_clip_epsilon = value
+        return self
+    
+    def ppo_lm(self, value):
+        self._config.ppo_lm = value
+        return self
+    
+    def ppo_nworkers(self, value):
+        self._config.ppo_nworkers = value
+        return self
+    
+    def ppo_minibatch_size(self, value):
+        self._config.ppo_minibatch_size = value
+        return self
+
+    def ppo_continuous(self, value):
+        self._config.ppo_continuous = value
+        return self
+
+    def gradient_steps(self, value):
+        self._config.gradient_steps = value
+        return self
+
+    def policy_kwargs(self, value):
+        self._config.policy_kwargs = value
+        return self
+    
+    def seed(self, value):
+        self._config.seed = value
         return self
     
     def build(self):
