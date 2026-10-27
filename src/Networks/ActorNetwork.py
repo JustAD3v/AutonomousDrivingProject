@@ -31,9 +31,40 @@ class ActorNetwork(nn.Module):
   def distribution(self, x):
     output = self(x)
     if self.continuous:
-      # Independent sums the log_prob over the action dimensions
-      return torch.distributions.Independent(
-        torch.distributions.Normal(output, torch.exp(self.log_std)), 1)
+      # clamp log_std to avoid unstable training
+      # if clamp is too low the gaussian will be very "precise" and so there is no exploration
+      # if clamp is too high the gaussian will be too "flat" and so mostly noise
+      std = torch.exp(self.log_std.clamp(-5.0, 1.0))
+      # we expand to match the size of the output 
+      # (which can be different from just out_features initialized in the constructor if we use mutliple minibatches)
+      # (with minibatches we have multiple elements of size out_features)
+      std = std.expand_as(output)
+      gaussian = torch.distributions.Normal(output, std)
+      tanh_gossian = torch.distributions.TransformedDistribution(
+          gaussian,
+          [torch.distributions.trasnforms.TanhTransform(cache_size=1)],
+      )
+      # Independent wraps the Normal distribution into an object 
+      # capable of sampling and calculating the log probability "automatically"
+      # That means by using .sample() on it we just get a sample of the Normal distribution
+      # And when calling .log_prob(v) on it, with v = (X, Y) a vector of action (with 2 components X and Y)
+      # It does calculate the sum of log probabilities of both components to get the log probability of v
+      # It's the same as calculating : sum(Normal.log_prob(v)) 
+      # or log(prob(X)) + log(prog(Y)) = log(prob(v))      
+      return torch.distributions.Independent(tanh_gossian, 1)
+    # Categorical applies softmax on network output
+    # to get a probability distribution from the output vector
+    # it also wraps it into an interface that allows for
+    # sampling that distribution
+    # and finding the log_prob for a given action
+    return torch.distributions.Categorical(logits=output)
+
+  def distribution(self, x):
+    output = self(x)
+    if self.continuous:
+      
+      return torch.distributions.Independent(torch.distributions.Normal(output, torch.exp(self.log_std)), 1)
+    
     # Categorical applies softmax on network output
     # to get a probability distribution from the output vector
     # it also wraps it into an interface that allows for

@@ -14,6 +14,8 @@ class PPOPolicy:
             distribution = self.network.distribution(state_tensor)
             action = distribution.sample()
         if self.network.continuous:
-            # the environment clips the action to its bounds, the unclipped sample is kept for the log_prob
-            return action.cpu().numpy(), distribution.log_prob(action)
+            action = action.cpu().numpy()
+            # map the action to the environment action space
+            action = ((self.action_space.high - self.action_space.low) / 2) * action + ((self.action_space.high + self.action_space.low) / 2)
+            return action, distribution.log_prob(action)
         return action.item(), distribution.log_prob(action)
