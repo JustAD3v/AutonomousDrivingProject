@@ -52,7 +52,7 @@ class PPOBuffer:
         self.episode_start = self.ptr
          
         
-    def get_batch(self):
+    def get_batch(self, minibatch_size=1):
         assert self.ptr == self.buffer_size
         states = np.stack([x[0] for x in self.buffer])
         actions = np.array([x[1] for x in self.buffer]) 
@@ -63,11 +63,27 @@ class PPOBuffer:
         )
         advantages = self.advantage_buffer
         returns = self.return_buffer 
-        
-        return (
+
+        result = (
             torch.from_numpy(states).to(self.device),
             torch.from_numpy(actions).to(self.device),
             log_action_probs.to(self.device),
             torch.from_numpy(advantages).to(self.device),
             torch.tensor(returns, dtype=torch.float32).to(self.device)
         )
+
+        # split_tensors = [
+        # (states_split, ...), 
+        # (actions_split, ...), 
+        # (log_prob_split, ...), 
+        # (adv_split, ...), 
+        # (returns_split, ...)
+        #]
+        split_tensors = [
+            torch.split(tensor, minibatch_size, dim=0)
+            for tensor in result
+        ]
+
+        # zip(*split_tensors) = zip(states_split, actions_split, log_prob_split, adv_split, returns_split)
+        # return [result_split1, result_split2, ...] with minibatch_size * result_plit
+        return [tuple(parts) for parts in zip(*split_tensors)]

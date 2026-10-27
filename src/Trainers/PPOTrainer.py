@@ -130,50 +130,48 @@ class PPOTrainer:
                     state = next_state
 
             # ============ GET BATCH =====================
-            states, actions, old_log_probs, advantages, returns = (
-                self.buffer.get_batch()
-            )
+            minibatches = self.buffer.get_batch()
+            for _ in range(self.ppo_update_epochs):
+                for minibatch in minibatches:
+                    states, actions, old_log_probs, advantages, returns = minibatch
+                    states = states.float()
+                    actions = actions.long()
+                    old_log_probs = old_log_probs.float().detach()
+                    advantages = advantages.float()
+                    returns = returns.float()
 
-            states = states.float()
-            actions = actions.long()
-            old_log_probs = old_log_probs.float().detach()
-            advantages = advantages.float()
-            returns = returns.float()
+                    # Normalize advantages ?
+                
+                # ============ OPTIMIZE CRITIC ===============
+                
+                    critic_values = self.critic_network(states).squeeze(-1)
 
-            # Normalize advantages ?
-            
-            # ============ OPTIMIZE CRITIC ===============
-            for _ in range(self.critic_update_steps):
-                critic_values = self.critic_network(states).squeeze(-1)
-
-                loss = self.critic_network.loss_fn(critic_values, returns)
-                self.optimize_model(loss, self.critic_network)
+                    loss = self.critic_network.loss_fn(critic_values, returns)
+                    self.optimize_model(loss, self.critic_network)
 
             # ============ OPTIMIZE ACTOR =================
-            for _ in range(self.actor_update_steps):
-                action_values = self.actor_network(states)
-                # Categorical applies softmax on network output
-                # to get a probability distribution from the output vector
-                # it also wraps it into an interface that allows for
-                # sampling that distribution
-                # and finding the log_prob for a given action
-                distribution = torch.distributions.Categorical(logits=action_values)
-                current_log_probs = distribution.log_prob(actions)
+                    action_values = self.actor_network(states)
+                    # Categorical applies softmax on network output
+                    # to get a probability distribution from the output vector
+                    # it also wraps it into an interface that allows for
+                    # sampling that distribution
+                    # and finding the log_prob for a given action
+                    distribution = torch.distributions.Categorical(logits=action_values)
+                    current_log_probs = distribution.log_prob(actions)
 
-                ratio = torch.exp(current_log_probs - old_log_probs)
+                    ratio = torch.exp(current_log_probs - old_log_probs)
 
-                clipped_ratio = torch.clamp(
-                    ratio,
-                    1.0 - self.clip_epsilon,
-                    1.0 + self.clip_epsilon
-                )
+                    clipped_ratio = torch.clamp(
+                        ratio,
+                        1.0 - self.clip_epsilon,
+                        1.0 + self.clip_epsilon
+                    )
 
-                unclipped_objective = ratio * advantages
-                clipped_objective = clipped_ratio * advantages
-
-                loss = -torch.minimum(unclipped_objective,clipped_objective).mean()
-
-                self.optimize_model(loss, self.actor_network)
+                    unclipped_objective = ratio * advantages
+                    clipped_objective = clipped_ratio * advantages
+                    
+                    loss = -torch.minimum(unclipped_objective,clipped_objective).mean()
+                    self.optimize_model(loss, self.actor_network)
             
             self.buffer.reset()
             iteration += 1
