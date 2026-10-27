@@ -14,6 +14,9 @@ class DQNWrapper:
             case "sb3_dqn":
                 self.trainer.learn(total_timesteps=self.config.iterations)
                 return None
+            case "ppo":
+                self.trainer.learn(total_timesteps=self.config.total_timesteps)
+                return None
             case _:
                 return self.trainer.learn()
 
@@ -30,7 +33,7 @@ class DQNWrapper:
 
     def predict(self, state, deterministic=True):
         match self.trainer_type:
-            case "sb3_dqn":
+            case "sb3_dqn" | "ppo":
                 return self.trainer.predict(state, deterministic=deterministic)
             case _:
                 return self.trainer.policy.predict(state, epsilon=0.0)

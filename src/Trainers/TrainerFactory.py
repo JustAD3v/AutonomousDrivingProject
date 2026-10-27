@@ -44,6 +44,16 @@ class TrainerFactory:
                 )
                 return DQNWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
+            case "ppo":
+                # PPO is on-policy and uses SB3's own rollout collection, so the model
+                # is built directly (no custom network/policy objects), like sb3_dqn.
+                from stable_baselines3 import PPO
+
+                ppo_kwargs = config.to_ppo_kwargs()
+                ppo_kwargs["seed"] = seed
+                ppo_model = PPO(policy_str, env, **ppo_kwargs)
+                return DQNWrapper(trainer=ppo_model, trainer_type=trainer_type, config=config, seed=seed)
+
             case _:
                 from stable_baselines3 import DQN
 

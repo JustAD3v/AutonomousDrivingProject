@@ -19,13 +19,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--train", action="store_true", default=False)
 parser.add_argument("--adversarial", action="store_true", default=False)
 parser.add_argument("--use_custom", action="store_true", default=False)
-parser.add_argument("--trainer", type=str, choices=["dqn", "sb3_dqn", "wocar"], default="dqn")
+parser.add_argument("--trainer", type=str, choices=["dqn", "sb3_dqn", "wocar", "ppo"], default="dqn")
 parser.add_argument("--net_file", type=str)
 parser.add_argument("--config", type=str)
 parser.add_argument("--render_delay", type=float)
 parser.add_argument("--render_human", action="store_true", default=False)
 parser.add_argument("--seed", type=int)
 parser.add_argument("--attack_bound", type=float)
+parser.add_argument("--total_timesteps", type=int, help="PPO: number of environment steps to train for")
+parser.add_argument("--tb_log", type=str, help="PPO: TensorBoard log directory (needs tensorboard installed)")
 
 args = parser.parse_args()
 
@@ -49,7 +51,8 @@ fast_env_config = {
 TRAIN = args.train
 USE_CUSTOM = args.use_custom
 TRAINER = args.trainer
-NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
+IS_PPO = TRAINER == "ppo"
+NETWORK_FILE = args.net_file if args.net_file else ("./models/ppo_trained" if IS_PPO else "./models/targetNetwork_trained")
 
 train_config = (
     TrainConfigBuilder()
@@ -78,6 +81,11 @@ if args.config:
 if args.seed:
     train_config.seed = args.seed
 
+if args.total_timesteps:
+    train_config.total_timesteps = args.total_timesteps
+if args.tb_log:
+    train_config.tensorboard_log = args.tb_log
+
 env = gym.make("highway-fast-v0", config=None)
 
 if TRAIN:
@@ -96,7 +104,10 @@ if TRAIN:
         results.plot()
 
 else:
-    if USE_CUSTOM:
+    if IS_PPO:
+        from stable_baselines3 import PPO
+        policy = PPO.load(NETWORK_FILE, device="cpu")
+    elif USE_CUSTOM:
         model = StateOnlyNN()
         model.load_state_dict(torch.load(NETWORK_FILE))
         policy = CustomPolicy(network=model, action_space=env.action_space)
@@ -121,6 +132,8 @@ else:
     attack_bound = 0.2
     if args.attack_bound:
         attack_bound = args.attack_bound
+    if args.adversarial and IS_PPO:
+        raise SystemExit("[!] --adversarial is not implemented for PPO yet (FGSMAdversarial expects a Q-network).")
     if args.adversarial:
         # adversarial = RandomAdversarial(policy, attack_bound)
         adversarial = FGSMAdversarial(policy, attack_bound)
