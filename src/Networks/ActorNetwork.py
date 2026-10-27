@@ -42,7 +42,7 @@ class ActorNetwork(nn.Module):
       gaussian = torch.distributions.Normal(output, std)
       tanh_gossian = torch.distributions.TransformedDistribution(
           gaussian,
-          [torch.distributions.trasnforms.TanhTransform(cache_size=1)],
+          [torch.distributions.transforms.TanhTransform(cache_size=1)],
       )
       # Independent wraps the Normal distribution into an object 
       # capable of sampling and calculating the log probability "automatically"
@@ -52,19 +52,6 @@ class ActorNetwork(nn.Module):
       # It's the same as calculating : sum(Normal.log_prob(v)) 
       # or log(prob(X)) + log(prog(Y)) = log(prob(v))      
       return torch.distributions.Independent(tanh_gossian, 1)
-    # Categorical applies softmax on network output
-    # to get a probability distribution from the output vector
-    # it also wraps it into an interface that allows for
-    # sampling that distribution
-    # and finding the log_prob for a given action
-    return torch.distributions.Categorical(logits=output)
-
-  def distribution(self, x):
-    output = self(x)
-    if self.continuous:
-      
-      return torch.distributions.Independent(torch.distributions.Normal(output, torch.exp(self.log_std)), 1)
-    
     # Categorical applies softmax on network output
     # to get a probability distribution from the output vector
     # it also wraps it into an interface that allows for
