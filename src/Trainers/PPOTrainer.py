@@ -53,59 +53,110 @@ class PPOTrainer:
 
     @Timer.measure("Prediction calculation")
     def _predict(self, state):
-        return self.policy.predict(state, epsilon=self.config.epsilon, device=self.device)
+        return self.policy.predict(state, device=self.device)
 
     @Timer.measure("Environment processing")
     def _environment_step(self, action):
         return self.env.step(action)
 
+    
     @Timer.measure("Training duration")
     def _train(self):
         print("[+] === Training starts ===")
         iteration = 0
-        episode_count = 0
+
         while iteration < self.config.iterations:
             state, _ = self.env.reset()
-            episode_return = 0
+            episode_return = 0.0
             episode_length = 0
-            for _ in range(self.config.batch_size):
-                # ========= SAMPLE COLLECTION =============#
+
+            for _ in range(self.config.buffer_size):
+                # ========= SAMPLE COLLECTION =============
+                state = np.asarray(state, dtype=np.float32).flatten()
+
                 action, log_action_prob = self._predict(state)
                 next_state, reward, term, trunc, _ = self._environment_step(action)
-                # episode_return += reward
-                # episode_length += 1
-                end = term | trunc | self.buffer.full
-                # no need to use np ?? use torch.as_tensor instead ?
-                state_tensor = torch.tensor(np.asarray(state, dtype=np.float32).flatten(), dtype=torch.float32)
-                critic_value = self.critic_network(state_tensor)
-                self.buffer.push(
-                    (
+
+                episode_return += reward
+                episode_length += 1
+
+                with torch.no_grad():
+                    state_tensor = torch.as_tensor(
                         state,
-                        action,
-                        reward,
-                        log_action_prob,
-                        critic_value
+                        dtype=torch.float32,
+                        device=self.device
                     )
-                )
-                state = next_state
+                    critic_value = self.critic_network(state_tensor).item()
+
+                # Store a detached scalar old log probability.
+                if torch.is_tensor(log_action_prob):
+                    log_action_prob = log_action_prob.detach().item()
+
+                self.buffer.push((
+                    state,
+                    action,
+                    reward,
+                    log_action_prob,
+                    critic_value
+                ))
+
+                end = term | trunc | self.buffer.full
                 if end:
                     if term:
-                        extra_critic_value = 0
+                        extra_critic_value = 0.0
                     else:
-                        action, log_action_prob = self._predict(state)
-                        next_next_state, _, _, _, _ = self._environment_step(action)
-                        next_state_tensor = torch.tensor(np.asarray(next_next_state, dtype=np.float32).flatten(), dtype=torch.float32)
-                        extra_critic_value = self.critic_network(next_state_tensor)
-                    self.buffer.finish_episode(extra_critic_value)
-                    state, _ = self.env.reset()
-                    # episode_return = 0
-                    # episode_length = 0
+                        next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
+                        with torch.no_grad():
+                            next_state_tensor = torch.as_tensor(
+                                next_state_array,
+                                dtype=torch.float32,
+                                device=self.device
+                            )
+                            extra_critic_value = self.critic_network(next_state_tensor).item()
 
-            states, actions, log_action_probs, critic_values, advantages, returns = self.buffer.get_batch()
-            #============ OPTIMIZE CRITIC ===============#
+                        print("extra:", extra_critic_value)
+
+                    self.buffer.finish_episode(extra_critic_value)
+
+                    print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
+
+                    episode_return = 0.0
+                    episode_length = 0
+
+                    # Reset the environment only if the episode ended.
+                    if term or trunc:
+                        state, _ = self.env.reset()
+                    else:
+                        # The buffer is full, but the episode may continue.
+                        state = next_state
+                else:
+                    state = next_state
+
+            # ============ GET BATCH =====================
+            states, actions, old_log_probs, advantages, returns = (
+                self.buffer.get_batch()
+            )
+
+            states = states.float()
+            actions = actions.long()
+            old_log_probs = old_log_probs.float().detach()
+            advantages = advantages.float()
+            returns = returns.float()
+
+            # Normalize advantages ?
+            
+            # ============ OPTIMIZE CRITIC ===============
+            critic_values = self.critic_network(states).squeeze(-1)
+
+            assert critic_values.shape == returns.shape, (
+                f"Critic predictions {critic_values.shape} "
+                f"do not match returns {returns.shape}"
+            )
+
             loss = self.critic_network.loss_fn(critic_values, returns)
             self.optimize_model(loss, self.critic_network)
-            #============ OPTIMIZE ACTOR ===============#
+
+            # ============ OPTIMIZE ACTOR =================
             for _ in range(self.update_steps):
                 action_values = self.actor_network(states)
                 # Categorical applies softmax on network output
@@ -113,21 +164,29 @@ class PPOTrainer:
                 # it also wraps it into an interface that allows for
                 # sampling that distribution
                 # and finding the log_prob for a given action
-                distribution = torch.distributions.Categorical(action_values)
-                current_log_action_probs = distribution.log_prob(actions)
-                ratio = torch.exp(current_log_action_probs - log_action_probs)
-                left_loss = ratio * advantages 
-                right_loss = torch.maximum(1-self.clip_epsilon, torch.minimum(ratio, 1+self.clip_epsilon)) * advantages        
-                loss = -torch.minimum(left_loss, right_loss).mean()  
+                distribution = torch.distributions.Categorical(logits=action_values)
+                current_log_probs = distribution.log_prob(actions)
+
+                ratio = torch.exp(current_log_probs - old_log_probs)
+
+                clipped_ratio = torch.clamp(
+                    ratio,
+                    1.0 - self.clip_epsilon,
+                    1.0 + self.clip_epsilon
+                )
+
+                unclipped_objective = ratio * advantages
+                clipped_objective = clipped_ratio * advantages
+
+                loss = -torch.minimum(unclipped_objective,clipped_objective).mean()
+
                 self.optimize_model(loss, self.actor_network)
             
+            self.buffer.reset()
+            iteration += 1
+            print(f"[*] Iteration Finished ({iteration}/{self.config.iterations})")
+             
     def learn(self) -> TrainResult:
         self.timer.reset()
-
-        self._warmup()
-        warmup_duration = self.timer.counters["Warmup duration"]
-        print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
-
         self._train()
-
         return self.record
