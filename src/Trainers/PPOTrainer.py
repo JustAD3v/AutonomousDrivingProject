@@ -72,14 +72,13 @@ class PPOTrainer:
 
             for _ in range(self.config.buffer_size):
                 # ========= SAMPLE COLLECTION =============
-                state_flat = np.asarray(state, dtype=np.float32).flatten()
-
                 action, log_action_prob = self._predict(state)
                 next_state, reward, term, trunc, _ = self._environment_step(action)
 
                 episode_return += reward
                 episode_length += 1
 
+                state_flat = np.asarray(state, dtype=np.float32).flatten()
                 with torch.no_grad():
                     state_tensor = torch.as_tensor(
                         state_flat,
@@ -179,8 +178,9 @@ class PPOTrainer:
             self.buffer.reset()
             iteration += 1
             print(f"[*] Iteration Finished ({iteration}/{self.config.iterations})")
-             
+    
     def learn(self) -> TrainResult:
         self.timer.reset()
         self._train()
+        self.timer.report()
         return self.record
