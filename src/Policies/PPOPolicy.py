@@ -10,7 +10,12 @@ class PPOPolicy:
     def predict(self, state, epsilon=0.0, device="cpu", deterministic=False):
         # investigate this weird np conversion for no reason ???
         state_tensor = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(device)
-        action_probs = self.network(state_tensor)
-        distribution = torch.distributions.Categorical(action_probs)
+        output = self.network(state_tensor)
+        # Categorical applies softmax on network output
+        # to get a probability distribution from the output vector
+        # it also wraps it into an interface that allows for
+        # sampling that distribution
+        # and finding the log_prob for a given action
+        distribution = torch.distributions.Categorical(output)
         action = distribution.sample().item()
-        return action, distribution[action]
+        return action, distribution.log_prob(action)

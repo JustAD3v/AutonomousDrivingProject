@@ -1,39 +1,61 @@
-from collections import deque
 import numpy as np
 import torch
 
 class PPOBuffer:
-    def __init__(self, buffer_size, batch_size, warmup_size, device):
-        self.buffer = deque(maxlen=buffer_size)
-        self.batch_size = batch_size
-        self.warmup_size = warmup_size
+    def __init__(self, buffer_size, device, gamma, lm):
+        self.buffer_size = buffer_size
+        self.buffer = np.zeros(self.buffer_size)
+        self.advantage_buffer = np.zeros(self.buffer_size)
+        self.return_buffer = np.zeros(self.buffer_size)
+        self.ptr = 0
+        self.episode_start = 0
+        self.gamma = gamma
+        self.lm = lm
         self.device = device
+        self.full = False
 
     def push(self, state_tuple):
+        # state_tuple = (state, action, reward, log_p, critic_value)
         self.buffer.append(state_tuple)
+        self.ptr = min(self.ptr + 1, self.buffer_size-1)
+        self.full = self.ptr == self.buffer_size-1
 
-    def warmed_up(self):
-        return len(self.buffer) >= self.warmup_size
-
-    def get_batch(self):
-        """ Draws a uniform batch of size <self.batch_size> from buffer """
-        indices = np.random.choice(
-            len(self.buffer),
-            size=self.batch_size,
-            replace=True
-        )
-        batch = [self.buffer[i] for i in indices]
+    def finish_episode(self, extra_critic_value):
+        # calculate the advantages using GAE method
+        advantages = np.zeros(self.ptr - self.episode_start)
+        for start in range(self.episode_start, self.ptr):
+            episode_slice = slice(start, self.ptr)
+            episode_steps = self.buffer[episode_slice]
+            rewards = np.array([e[2] for e in episode_steps])
+            critic_values = np.array([e[-1] for e in episode_steps] + [extra_critic_value])
+            delta = rewards + self.gamma * critic_values[1:] - critic_values[:-1]
+            factors = np.array([pow(self.gamma * self.lm, i) for i in range(self.buffer_size)])
+            advantage = np.sum(delta * factors)
+            advantages.append(advantage)
+        self.advantage_buffer[ep_slice] = advantages
+        # calculate return
+        ep_slice = slice(self.episode_start, self.ptr)
+        gamma_factors = np.array([pow(self.gamma, i) for i in range(self.buffer_size)])
+        episode_steps = self.buffer[ep_slice]
+        rewards = np.array([e[2] for e in episode_steps])
+        self.return_buffer[ep_slice] = [
+            np.sum(gamma_factors * rewards) 
+            for _ in range(self.ptr-self.episode_start)
+        ] 
         
-        states = np.stack([x[0] for x in batch])
-        actions = np.array([x[1] for x in batch], dtype=np.int64)
-        rewards = np.array([x[2] for x in batch], dtype=np.float32)
-        next_states = np.stack([x[3] for x in batch])
-        dones = np.array([x[4] for x in batch], dtype=np.float32)
+    def get_batch(self):
+        states = np.stack([x[0] for x in self.buffer])
+        actions = np.array([x[1] for x in self.buffer]) 
+        log_action_probs = np.array([x[3] for x in self.buffer])
+        critic_values = np.array([x[-1] for x in self.buffer])
+        advantages = self.advantage_buffer
+        returns = self.return_buffer 
         
         return (
             torch.from_numpy(states).to(self.device),
             torch.from_numpy(actions).to(self.device),
-            torch.from_numpy(rewards).to(self.device),
-            torch.from_numpy(next_states).to(self.device),
-            torch.from_numpy(dones).to(self.device)
+            torch.from_numpy(log_action_probs).to(self.device),
+            torch.from_numpy(critic_values).to(self.device),
+            torch.from_numpy(advantages).to(self.device),
+            torch.from_numpy(returns).to(self.device)
         )

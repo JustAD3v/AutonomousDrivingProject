@@ -11,7 +11,7 @@ from Trainers.PPOBuffer import PPOBuffer
 from Trainers.TrainResult import TrainResult
 from Utils.Timer import Timer
 
-class WocaRDQN:
+class PPOTrainer:
     def __init__(self, 
                  config: TrainConfig, 
                  actor_network: nn.Module,
@@ -30,15 +30,15 @@ class WocaRDQN:
             
         self.config = config
         self.policy = policy
-        self.clip_epsilon = 0.2
+        self.clip_epsilon = self.config.ppo_clip_epsilon
+        self.update_steps = self.config.ppo_update_steps
         self.actor_network = actor_network
-        self.old_actor_weights = self.actor_network.state_dict()
         self.critic_network = critic_network
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
-        self.r_buffer = PPOBuffer(self.config.buffer_size, 
-                                     config.batch_size,
-                                     config.warmup_size,
-                                     self.device)
+        self.buffer = PPOBuffer(self.config.buffer_size, 
+                                self.device, 
+                                self.config.gamma, 
+                                self.config.ppo_lm)
         self.record = TrainResult(self.config.iterations)
         
     def optimize_model(self, loss, model):
@@ -67,48 +67,59 @@ class WocaRDQN:
         while iteration < self.config.iterations:
             state, _ = self.env.reset()
             episode_return = 0
-            nb_steps = 0
+            episode_length = 0
             for _ in range(self.config.batch_size):
-                action, action_probability = self._predict(state)
-                new_state, reward, term, trunc, _ = self._environment_step(action)
-                episode_return += reward
-                nb_steps += 1
+                # ========= SAMPLE COLLECTION =============#
+                action, log_action_prob = self._predict(state)
+                next_state, reward, term, trunc, _ = self._environment_step(action)
+                # episode_return += reward
+                # episode_length += 1
+                end = term | trunc | self.buffer.full
+                # no need to use np ?? use torch.as_tensor instead ?
                 state_tensor = torch.tensor(np.asarray(state, dtype=np.float32).flatten(), dtype=torch.float32)
-                new_state_tensor = torch.tensor(np.asarray(new_state, dtype=np.float32).flatten(), dtype=torch.float32)
-                value = self.critic_network(state_tensor)
-                value_next = self.critic_network(new_state_tensor)
-                rtg = reward + self.config.gamma * value_next
-                advantage = rtg - value 
-                self.r_buffer.push(
-                (
-                    np.asarray(state, dtype=np.float32).flatten(),
-                    action,
-                    action_probability, 
-                    reward, 
-                    value,
-                    rtg,
-                    advantage,
-                    term
+                critic_value = self.critic_network(state_tensor)
+                self.buffer.push(
+                    (
+                        state,
+                        action,
+                        reward,
+                        log_action_prob,
+                        critic_value
                     )
                 )
-            
-            state, _, action_probability, _, value, rtg, _, _ = self.r_buffer.get_batch()
+                state = next_state
+                if end:
+                    if term:
+                        extra_critic_value = 0
+                    else:
+                        action, log_action_prob = self._predict(state)
+                        next_next_state, _, _, _, _ = self._environment_step(action)
+                        next_state_tensor = torch.tensor(np.asarray(next_next_state, dtype=np.float32).flatten(), dtype=torch.float32)
+                        extra_critic_value = self.critic_network(next_state_tensor)
+                    self.buffer.finish_episode(extra_critic_value)
+                    state, _ = self.env.reset()
+                    # episode_return = 0
+                    # episode_length = 0
+
+            states, actions, log_action_probs, critic_values, advantages, returns = self.buffer.get_batch()
             #============ OPTIMIZE CRITIC ===============#
-            loss = self.critic_network.loss_fn(value, rtg)
+            loss = self.critic_network.loss_fn(critic_values, returns)
             self.optimize_model(loss, self.critic_network)
             #============ OPTIMIZE ACTOR ===============#
-            saved_current_weights = self.actor_network.state_dict()
-            # switching/copying state is a performance bottleneck ?
-            self.actor_network.load_state_dict(self.old_actor_weights)
-            state_tensor = torch.tensor(state, dtype=torch.float32).to(self.device)
-            old_action_prob = self.actor_network(state_tensor)
-            ratio = action_probability / old_action_prob
-            left_loss = ratio * action_probability 
-            right_loss = max(1-self.clip_epsilon, min(ratio, 1+self.clip_epsilon))
-            self.actor_network.load_state_dict(saved_current_weights)            
-            loss = -min(left_loss, right_loss)
-            self.old_actor_weights = self.actor_network.state_dict()
-            self.optimize_model(loss, self.actor_network)
+            for _ in range(self.update_steps):
+                action_values = self.actor_network(states)
+                # Categorical applies softmax on network output
+                # to get a probability distribution from the output vector
+                # it also wraps it into an interface that allows for
+                # sampling that distribution
+                # and finding the log_prob for a given action
+                distribution = torch.distributions.Categorical(action_values)
+                current_log_action_probs = distribution.log_prob(actions)
+                ratio = torch.exp(current_log_action_probs - log_action_probs)
+                left_loss = ratio * advantages 
+                right_loss = torch.maximum(1-self.clip_epsilon, torch.minimum(ratio, 1+self.clip_epsilon)) * advantages        
+                loss = -torch.minimum(left_loss, right_loss).mean()  
+                self.optimize_model(loss, self.actor_network)
             
     def learn(self) -> TrainResult:
         self.timer.reset()
