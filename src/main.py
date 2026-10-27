@@ -137,12 +137,13 @@ def main():
     # PPO
     train_config = (
         TrainConfigBuilder()
-        .buffer_size(600)
+        .buffer_size(800)
         .gamma(0.95)
         .ppo_lm(0.85)
         .ppo_critic_update_steps(10)
         .ppo_actor_update_steps(10)
-        .iterations(4)
+        .iterations(25)
+        .ppo_nworkers(8)
         .learning_rate(5e-4)
         .build()
     )
