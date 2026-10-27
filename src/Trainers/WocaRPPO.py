@@ -98,8 +98,8 @@ class WocaRPPO:
 
         # the worst-case network is a Q network over a finite set of actions,
         # so the WocaR framework only applies to the discrete action space
-        if config.ppo_continuous:
-            raise ValueError("WocaRPPO only supports the discrete action space")
+        # if config.ppo_continuous:
+        #     raise ValueError("WocaRPPO only supports the discrete action space")
 
         self.config = config
         self.policy = policy
