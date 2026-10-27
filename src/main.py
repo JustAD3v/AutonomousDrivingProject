@@ -156,7 +156,8 @@ def main():
     if args.seed:
         train_config.seed = args.seed
 
-    env = gym.make("highway-fast-v0", config=None)
+    env_config = {"action": {"type": "ContinuousAction"}} if train_config.ppo_continuous else None
+    env = gym.make("highway-fast-v0", config=env_config)
 
     if TRAIN:
         if MODEL_TYPE == "ppo":
@@ -165,7 +166,10 @@ def main():
                 "actor": ActorNetwork,
                 "critic": CriticNetwork
             }
-            network_factory=NetworkFactory(train_config=train_config, network_types=ppo_net_types)
+            ppo_net_configs = {
+                "actor": {"out_features": env.action_space.shape[0], "continuous": True}
+            } if train_config.ppo_continuous else None
+            network_factory=NetworkFactory(train_config=train_config, network_types=ppo_net_types, configs=ppo_net_configs)
         else:
             # factory for DQN
             network_factory=NetworkFactory(train_config=train_config, network_types=StateOnlyNN)
