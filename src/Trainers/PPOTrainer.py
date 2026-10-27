@@ -72,7 +72,7 @@ class PPOTrainer:
 
             for _ in range(self.config.buffer_size):
                 # ========= SAMPLE COLLECTION =============
-                state = np.asarray(state, dtype=np.float32).flatten()
+                state_flat = np.asarray(state, dtype=np.float32).flatten()
 
                 action, log_action_prob = self._predict(state)
                 next_state, reward, term, trunc, _ = self._environment_step(action)
@@ -82,7 +82,7 @@ class PPOTrainer:
 
                 with torch.no_grad():
                     state_tensor = torch.as_tensor(
-                        state,
+                        state_flat,
                         dtype=torch.float32,
                         device=self.device
                     )
@@ -93,7 +93,7 @@ class PPOTrainer:
                     log_action_prob = log_action_prob.detach().item()
 
                 self.buffer.push((
-                    state,
+                    state_flat,
                     action,
                     reward,
                     log_action_prob,
