@@ -3,16 +3,18 @@ import highway_env
 from stable_baselines3 import PPO
 
 def main():
-    # 1. Initialize the Highway Environment with human rendering
-    env = gym.make("highway-fast-v0", render_mode="human")
+    # Initialize the Highway Environment with human rendering and real-time speed sync
+    env = gym.make(
+        "highway-fast-v0", 
+        render_mode="human", 
+    )
 
-    # 2. LOAD YOUR TRAINED AGENT DIRECTLY FROM DISK
-    # This completely replaces the "model = PPO(...)" and "model.learn(...)" code
+    # LOAD YOUR TRAINED AGENT DIRECTLY FROM DISK
     print("=== Loading Trained Model Weights ===")
     model = PPO.load("ppo_highway_model", env=env)
 
-    # 3. Test and Evaluate the Loaded Agent
-    print("=== Testing Loaded Agent (5 Episodes) ===")
+    # Test and Evaluate the Loaded Agent
+    print("=== Testing Loaded Agent (10 Episodes) ===")
     for episode in range(10):
         obs, info = env.reset()
         done = truncated = False
