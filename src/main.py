@@ -92,6 +92,13 @@ def main():
         help="Maximum perturbation bound during adversarial evaluation (default: 0.2).",
     )
 
+    parser.add_argument(
+        "--continuous",
+        action="store_true",
+        default=False,
+        help="Use the continuous action space (PPO only), for training and evaluation.",
+    )
+
     args = parser.parse_args()
 
     fast_env_config = {
@@ -156,6 +163,10 @@ def main():
     if args.seed:
         train_config.seed = args.seed
 
+    # overwrite continuous mode if in args
+    if args.continuous:
+        train_config.ppo_continuous = True
+
     env_config = {"action": {"type": "ContinuousAction"}} if train_config.ppo_continuous else None
     env = gym.make("highway-fast-v0", config=env_config)
 
@@ -194,7 +205,10 @@ def main():
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = CustomPolicy(network=model, action_space=env.action_space)
             case "ppo":
-                model = ActorNetwork()
+                if train_config.ppo_continuous:
+                    model = ActorNetwork(out_features=env.action_space.shape[0], continuous=True)
+                else:
+                    model = ActorNetwork()
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = PPOPolicy(network=model, action_space=env.action_space)
             case "sb3_dqn":
@@ -219,7 +233,8 @@ def main():
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
-                            env_config=None,
+                            env_config=env_config,
+                            continuous=args.continuous,
                             render_delay=render_delay,
                             render_mode=render_mode,
                             adversarial=adversarial,

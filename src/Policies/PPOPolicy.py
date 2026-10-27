@@ -14,8 +14,9 @@ class PPOPolicy:
             distribution = self.network.distribution(state_tensor)
             action = distribution.sample()
         if self.network.continuous:
+            log_prob = distribution.log_prob(action)
             action = action.cpu().numpy()
             # map the action to the environment action space
             action = ((self.action_space.high - self.action_space.low) / 2) * action + ((self.action_space.high + self.action_space.low) / 2)
-            return action, distribution.log_prob(action)
+            return action, log_prob
         return action.item(), distribution.log_prob(action)
