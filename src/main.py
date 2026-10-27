@@ -167,7 +167,7 @@ def main():
     if args.continuous:
         train_config.ppo_continuous = True
 
-    env_config = {"action": {"type": "ContinuousAction"}} if train_config.ppo_continuous else None
+    env_config = {"action": {"type": "ContinuousAction"}, "offroad_terminal": True} if train_config.ppo_continuous else None
     env = gym.make("highway-fast-v0", config=env_config)
 
     if TRAIN:
