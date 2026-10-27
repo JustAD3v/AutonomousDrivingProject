@@ -25,6 +25,11 @@ class PPOBuffer:
         self.ptr += 1
         self.full = self.ptr >= self.buffer_size
 
+    def merge(self, buffer_list):
+        for worker_buffer in buffer_list:
+            for sample in worker_buffer.buffer:
+                self.push(sample)
+
     def finish_episode(self, extra_critic_value):
         segment_len = self.ptr - self.episode_start
         segment_slice = slice(self.episode_start, self.ptr)
@@ -43,7 +48,7 @@ class PPOBuffer:
         for t in reversed(range(segment_len)):
             delta = rewards[t] + self.gamma * critic_values[t+1] - critic_values[t] 
             gae = delta + self.lm * self.gamma * gae
-            total_return = rewards[t] + self.gamma * total_return 
+            total_return = rewards[t] + self.gamma * total_return # add bootstrapped critic value for next state ?
             advantages[t] = gae
             returns[t] = total_return
 

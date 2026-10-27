@@ -28,8 +28,8 @@ class TrainConfig:
         self.ppo_update_epochs = 4
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
-        self.ppo_nagents = 1
-        self.ppo_minibatch_size = self.ppo_nagents * self.buffer_size # default takes the whole buffer
+        self.ppo_nworkers = 10
+        self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
 
     def to_json(self):
         return json.dumps(self.__dict__)
