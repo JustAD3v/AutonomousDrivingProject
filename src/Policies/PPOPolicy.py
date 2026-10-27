@@ -15,8 +15,14 @@ class PPOPolicy:
             action = distribution.sample()
         if self.network.continuous:
             log_prob = distribution.log_prob(action)
-            action = action.cpu().numpy()
-            # map the action to the environment action space
-            action = ((self.action_space.high - self.action_space.low) / 2) * action + ((self.action_space.high + self.action_space.low) / 2)
-            return action, log_prob
+            # raw sampled action, consistent with log_prob (use to_env_action before env.step)
+            return action.cpu().numpy(), log_prob
         return action.item(), distribution.log_prob(action)
+
+    def to_env_action(self, action):
+        if not self.network.continuous:
+            return action
+        # map the raw action to the environment action space and clip it to its bounds
+        low, high = self.action_space.low, self.action_space.high
+        action = ((high - low) / 2) * action + ((high + low) / 2)
+        return np.clip(action, low, high)

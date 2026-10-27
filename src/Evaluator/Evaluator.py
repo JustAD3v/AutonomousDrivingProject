@@ -50,6 +50,7 @@ class Evaluator:
                 state = self.adversarial.disrupt(state)
                 action, _ = self.policy.predict(state, deterministic=True)
                 if self.continuous:
+                    action = self.policy.to_env_action(action)
                     choices += action
                     episode_choices += action
                 else:

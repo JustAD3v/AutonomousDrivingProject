@@ -21,7 +21,7 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
     episode_length = 0
     for _ in range(buffer_size):
         action, log_action_prob = policy.predict(state, device=device)
-        next_state, reward, term, trunc, _ = env.step(action)
+        next_state, reward, term, trunc, _ = env.step(policy.to_env_action(action))
         episode_return += reward
         episode_length += 1
         state_flat = np.asarray(state, dtype=np.float32).flatten()
@@ -131,7 +131,7 @@ class PPOTrainer:
 
     @Timer.measure("Environment processing")
     def _environment_step(self, action):
-        return self.env.step(action)
+        return self.env.step(self.policy.to_env_action(action))
     
     @Timer.measure("Training duration")
     def _train(self):

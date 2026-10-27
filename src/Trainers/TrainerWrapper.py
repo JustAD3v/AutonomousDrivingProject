@@ -36,7 +36,7 @@ class TrainerWrapper:
                 return self.trainer.predict(state, deterministic=deterministic)
             case "ppo":
                 action, _ = self.trainer.policy.predict(state)
-                return action 
+                return self.trainer.policy.to_env_action(action)
             case _:
                 return self.trainer.policy.predict(state, epsilon=0.0)
 
