@@ -1,0 +1,450 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import gymnasium as gym
+import highway_env
+import numpy as np
+from concurrent.futures import ProcessPoolExecutor
+
+from Trainers.TrainConfig import TrainConfig
+from Trainers.PPOBuffer import PPOBuffer
+from Trainers.TrainResult import TrainResult
+from Utils.Timer import Timer
+
+from auto_LiRPA import BoundedModule, BoundedTensor
+from auto_LiRPA.perturbations import PerturbationLpNorm
+
+PARALLEL = True
+
+def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
+    env = gym.make(env_name, config=env_config)
+    state, _ = env.reset()
+    buffer = PPOBuffer(buffer_size, device, gamma, ppo_lm)
+    episode_return = 0.0
+    episode_length = 0
+    for _ in range(buffer_size):
+        action, log_action_prob = policy.predict(state, device=device)
+        next_state, reward, term, trunc, _ = env.step(policy.to_env_action(action))
+        episode_return += reward
+        episode_length += 1
+        state_flat = np.asarray(state, dtype=np.float32).flatten()
+        with torch.no_grad():
+            state_tensor = torch.as_tensor(
+                state_flat,
+                dtype=torch.float32,
+                device=device
+            )
+            critic_value = critic_network(state_tensor).item()
+        # Store a detached scalar old log probability.
+        if torch.is_tensor(log_action_prob):
+            log_action_prob = log_action_prob.detach().item()
+        buffer.push((
+            state_flat,
+            action,
+            reward,
+            log_action_prob,
+            critic_value
+        ))
+        end = term | trunc | buffer.full
+        if end:
+            if term:
+                extra_critic_value = 0.0
+            else:
+                next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
+                with torch.no_grad():
+                    next_state_tensor = torch.as_tensor(
+                        next_state_array,
+                        dtype=torch.float32,
+                        device=device
+                    )
+                    extra_critic_value = critic_network(next_state_tensor).item()
+            buffer.finish_episode(extra_critic_value)
+            print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
+            episode_return = 0.0
+            episode_length = 0
+            # Reset the environment only if the episode ended.
+            if term or trunc:
+                state, _ = env.reset()
+            else:
+                # The buffer is full, but the episode may continue.
+                state = next_state
+        else:
+            state = next_state
+    return buffer
+
+class PPOTrainer:
+    def __init__(self, 
+                 config: TrainConfig, 
+                 actor_network: nn.Module,
+                 critic_network: nn.Module, 
+                 woca_network: nn.Module, 
+                 policy, 
+                 env_name = "highway-fast-v0",  
+                 env_config = None,
+                 env = None,
+                 use_gpu = False):
+        self.timer = Timer()
+
+        if env is not None:
+            self.env = env
+        else:
+            self.env = gym.make(env_name, config=env_config)
+
+        self.env_name = env_name
+        # parallel workers build their own env, they must use the same config (e.g. action type)
+        self.env_config = env_config if env_config is not None else self.env.unwrapped.config
+
+        self.config = config
+        self.policy = policy
+        self.clip_epsilon = self.config.ppo_clip_epsilon
+        self.actor_update_steps = self.config.ppo_actor_update_steps
+        self.critic_update_steps = self.config.ppo_critic_update_steps
+        self.robust_actor_network = actor_network
+        self.critic_network = critic_network
+        self.woca_network = woca_network
+        self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
+        self.buffer = PPOBuffer(self.config.buffer_size, 
+                                self.device, 
+                                self.config.gamma, 
+                                self.config.ppo_lm)
+        self.record = TrainResult(self.config.iterations)
+
+    @Timer.measure("Optimization duration")
+    def optimize_model(self, loss, model):
+       model.optimizer.zero_grad()
+       loss.backward()
+       
+       torch.nn.utils.clip_grad_norm_(
+         model.parameters(),
+         max_norm=10.0
+       )
+       model.optimizer.step()
+
+    def rounded_nworkers(self):
+        if self.config.buffer_size <= 0:
+            raise ValueError("buffer_size must be positive")
+        if self.config.ppo_nworkers < 1:
+            raise ValueError("max_workers must be at least 1")
+        for nworkers in range(min(self.config.buffer_size, self.config.ppo_nworkers), 0, -1):
+            if self.config.buffer_size % nworkers == 0:
+                return nworkers
+        return 1
+
+    def getWocaMinQ(self, states, subset_actions=None):
+        with torch.no_grad():
+            # don't create a graph for qvalues either way it will bind qvalues to the graph
+            # and when the auto grad releases the tensor we can't use them anymore
+            # even though we return it (we return minQvalues which is bound to qvalues)
+            qvalues = self.woca_network(states.to(self.device)) # (B, 5)
+            # for each set of 5 qvalues only keep the qvalue associated
+            # to the action from subset_actions
+            # that has the minimum value
+            if subset_actions is not None:
+                minQValues = torch.stack([
+                    qvalues[row, idx].min()
+                    for row, idx in enumerate(subset_actions)
+                ])
+            else:
+                minQValues = qvalues.min(dim=1).values
+        return minQValues
+
+    @Timer.measure("Prediction calculation")
+    def _predict(self, state):
+        return self.policy.predict(state, device=self.device)
+
+    @Timer.measure("Environment processing")
+    def _environment_step(self, action):
+        return self.env.step(self.policy.to_env_action(action))
+
+    def getDistMax(self, states, grad_step_size,grad_steps):
+        # detach states to not change the computational graph on it
+        states = states.detach()
+    
+        # get distribution from qvalues
+        with torch.no_grad():
+          # don't create a graph either way it will bind probs to the robust_net graph
+          # and at the end it will release the tensors used
+          # so next use of probs in the loop after will cause errors (reuse of released tensors)
+          distrib = self.robust_actor_network(states)
+          probs = F.log_softmax(distrib, dim=1)
+
+        # init delta with random pertubration in [-eps; eps]
+        delta = torch.empty_like(states).uniform_(-self.attack_budget, self.attack_budget)
+
+        # find perturbation delta that maximizes the distance using gradient ascent
+        dist = None
+        for _ in range(grad_steps):
+          # attach delta to the graph to register operations on it
+          # in order to compute the auto grad
+          delta.requires_grad_(True)
+
+          # operations recorded in the graph
+          p_states = states + delta
+          p_distrib = self.robust_actor_network(p_states)
+          p_probs = F.log_softmax(p_distrib, dim=1)
+
+          dist = F.kl_div(
+              p_probs,
+              probs,
+              reduction="batchmean",
+              # this indicates that the target param (probs.log()) is passed in the log space
+              # it is recommended for soft_max log output in the documentation :
+              # https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.kl_div.html
+              log_target=True
+          )
+
+          # uses the graph to compute gradient
+          grad = torch.autograd.grad(dist, delta)[0]
+
+          with torch.no_grad():
+              # don't include those calculations in the comutational graph
+              delta = torch.clamp(
+                  delta + grad_step_size * grad,
+                  min=-self.attack_budget,
+                  max=self.attack_budget
+              )
+          # detach delta from the graph so next gradient calculation 
+          # is a fresh new gradient independent from the previous one
+          delta = delta.detach()
+
+        # now we have the delta that maximizes the distance
+        # compute the actual distance outside of the loop so it is associated 
+        # to a fresh graph that will be used by the robust_net to calc loss and optimize the net      
+        p_states = states + delta
+        p_distrib = self.robust_actor_network(p_states)
+        p_probs = F.log_softmax(p_distrib, dim=1)
+        final_dist = F.kl_div(
+          p_probs,
+          probs,
+          reduction="batchmean",
+          log_target=True
+        )
+        
+        return final_dist
+
+    def getStateWeight(self, states):
+        # use wocar network to calculate minQvalue
+        # use critic network to calculate the critic value
+        # calculate the weight as stated in the paper : V - minQ
+        min_qvalues = self.getWocaMinQ(states)
+        critic_values = self.critic_network(states)
+        return torch.sub(critic_values, min_qvalues)
+
+    def calcRegularization(self, states, grad_step_size, grad_steps):
+        with torch.no_grad():
+          # w(s) does not need to be part of the graph for backprop
+          # It can be treated as a constant 
+          w_states = self.getStateWeight(states)
+        max_dist = self.getDistMax(states, grad_step_size, grad_steps)
+        reg = torch.mul(w_states, max_dist)
+        return reg.mean()
+
+    def filter_actions(self, lb_q, ub_q):
+        actions = []
+        for (lb, ub) in zip(lb_q, ub_q):
+            actions.append([
+               # for each action i,
+               i for i in range(len(lb)) 
+               # if there is an action j (i != j) with a lower bound lower than ub[i]
+               # then this action might be chosen 
+               # because its qvalue domain covers a part of the domain of another action
+               # You can think it the opposite way :
+               # if all lb of other actions j are greater than ub[i],
+               # this action will never be chosen because its qvalue will always be lower
+               # than the one of the other actions 
+               if any([ub[i] > lb[j] for j in range(len(lb)) if j != i])  
+            ])
+        return actions
+
+    def getSubsetActions(self, states):
+        # get lower and upper bound of perturbated states
+        lb_states = (states - self.attack_budget).to(
+            device=self.device,
+            dtype=torch.float32
+        )
+        ub_states = (states + self.attack_budget).to(
+            device=self.device,
+            dtype=torch.float32
+        )
+        # wrap model in auto_LiRPA framework
+        # use _bounded_robust_net as a cache 
+        # to avoid calculating it at every round
+        if self._bounded_robust_net is None:
+            self._bounded_robust_net = BoundedModule(
+                self.robust_net,
+                torch.empty_like(states)
+            )
+        # Compute bounds using LiRPA using the given lower and upper bounds.
+        norm = float("inf")
+        ptb = PerturbationLpNorm(norm=norm, x_L=lb_states, x_U=ub_states)
+        bounded_qvalues = BoundedTensor(states, ptb)
+        # Compute bounds using CROWN
+        lb_qvalues, ub_qvalues = self._bounded_robust_net.compute_bounds(
+            x=(bounded_qvalues,),
+            method='CROWN'
+        )
+        # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
+        # filter actions
+        return self.filter_actions(lb_qvalues, ub_qvalues)
+
+    @Timer.measure("Critic network update")
+    def _train_critic_network(self, states, returns):
+        critic_values = self.critic_network(states).squeeze(-1)
+        loss = self.critic_network.loss_fn(critic_values, returns)
+        self.optimize_model(loss, self.critic_network)
+
+    @Timer.measure("Robust actor network update")
+    def _train_robust_actor_network(self, states, actions, old_log_probs, advantages, reg_loss):
+        distribution = self.robust_actor_network.distribution(states)
+        current_log_probs = distribution.log_prob(actions)
+
+        ratio = torch.exp(current_log_probs - old_log_probs)
+
+        clipped_ratio = torch.clamp(
+            ratio,
+            1.0 - self.clip_epsilon,
+            1.0 + self.clip_epsilon
+        )
+
+        woca_qvalues = self.woca_network(states)
+        woca_advantages = advantages + self.k_wst * woca_qvalues
+        unclipped_objective = ratio * woca_advantages
+        clipped_objective = clipped_ratio * woca_advantages
+
+        loss = -torch.minimum(unclipped_objective, clipped_objective).mean() + self.k_reg * reg_loss
+        self.optimize_model(loss, self.robust_actor_network)
+
+    @Timer.measure("WOCA network update")
+    def _train_woca_network(self, states, actions, rewards, next_states, dones):
+        subset_actions = self.getSubsetActions(next_states)
+        with torch.no_grad():
+          # no need to build a graph for calculating target
+          # (no backprop is computed)
+          woca_qvalues = self.getWocaMinQ(next_states, subset_actions)
+          y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+        y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
+        woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
+        self.optimize_model(woca_loss, self.woca_net)
+    
+    @Timer.measure("Training duration")
+    def _train(self):
+        print("[+] === Training starts ===")
+        iteration = 0
+
+        while iteration < self.config.iterations:
+            
+            if PARALLEL:
+                print("using parallel !")
+                nworkers = self.rounded_nworkers()
+                buff_size = self.config.buffer_size // nworkers
+                with ProcessPoolExecutor(max_workers=nworkers) as executor:
+                    futures = [executor.submit(collector_worker, 
+                                             self.env_name, 
+                                             self.env_config, 
+                                             buff_size, 
+                                             self.policy, 
+                                             self.device, 
+                                             self.critic_network, 
+                                             self.config.gamma, 
+                                             self.config.ppo_lm)
+                                for _ in range(nworkers)
+                            ]
+                    res = [f.result() for f in futures]
+                    self.buffer.merge(res)
+            else:
+                state, _ = self.env.reset()
+                episode_return = 0.0
+                episode_length = 0
+
+                for _ in range(self.config.buffer_size):
+                    # ========= SAMPLE COLLECTION =============
+                    action, log_action_prob = self._predict(state)
+                    next_state, reward, term, trunc, _ = self._environment_step(action)
+
+                    episode_return += reward
+                    episode_length += 1
+
+                    state_flat = np.asarray(state, dtype=np.float32).flatten()
+                    with torch.no_grad():
+                        state_tensor = torch.as_tensor(
+                            state_flat,
+                            dtype=torch.float32,
+                            device=self.device
+                        )
+                        critic_value = self.critic_network(state_tensor).item()
+
+                    # Store a detached scalar old log probability.
+                    if torch.is_tensor(log_action_prob):
+                        log_action_prob = log_action_prob.detach().item()
+
+                    self.buffer.push((
+                        state_flat,
+                        action,
+                        reward,
+                        log_action_prob,
+                        critic_value
+                    ))
+
+                    end = term | trunc | self.buffer.full
+                    if end:
+                        if term:
+                            extra_critic_value = 0.0
+                        else:
+                            next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
+                            with torch.no_grad():
+                                next_state_tensor = torch.as_tensor(
+                                    next_state_array,
+                                    dtype=torch.float32,
+                                    device=self.device
+                                )
+                                extra_critic_value = self.critic_network(next_state_tensor).item()
+        
+                        self.buffer.finish_episode(extra_critic_value)
+
+                        print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
+
+                        episode_return = 0.0
+                        episode_length = 0
+
+                        # Reset the environment only if the episode ended.
+                        if term or trunc:
+                            state, _ = self.env.reset()
+                        else:
+                            # The buffer is full, but the episode may continue.
+                            state = next_state
+                    else:
+                        state = next_state
+            
+            # ============ GET BATCH =====================
+            minibatches = self.buffer.get_batch()
+            for _ in range(self.config.ppo_update_epochs):
+                for minibatch in minibatches:
+                    states, actions, old_log_probs, advantages, returns = minibatch
+                    states = states.float()
+                    actions = actions.float() if actions.is_floating_point() else actions.long()
+                    old_log_probs = old_log_probs.float().detach()
+                    advantages = advantages.float()
+                    returns = returns.float()
+
+
+                # ============ OPTIMIZE CRITIC ===============
+                    self._train_critic_network(states, returns)
+
+                # ============ TRAIN WOCA NETWORK ============
+                    self._train_woca_network(states, actions, rewards, next_states, dones)
+
+                # ============ CALCULATE REGULARIZATION ============
+                    reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
+
+                # ============ OPTIMIZE ROBUST ACTOR =================
+                    self._train_robust_actor_network(states, actions, old_log_probs, advantages, reg_loss)
+            
+            self.buffer.reset()
+            iteration += 1
+            print(f"[*] Iteration Finished ({iteration}/{self.config.iterations})")
+    
+    def learn(self) -> TrainResult:
+        self.timer.reset()
+        self._train()
+        self.timer.report()
+        return self.record
