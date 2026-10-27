@@ -72,7 +72,7 @@ class PPOBuffer:
             dtype=torch.float32,
             device=self.device
         )
-        advantages = self.advantage_buffer
+        advantages = (self.advantage_buffer - self.advantage_buffer.mean()) / (self.advantage_buffer.std() + 1e-8)
         returns = self.return_buffer 
 
         result = (

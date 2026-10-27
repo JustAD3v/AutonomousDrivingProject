@@ -232,8 +232,7 @@ class PPOTrainer:
                     advantages = advantages.float()
                     returns = returns.float()
 
-                    # Normalize advantages ?
-                
+
                 # ============ OPTIMIZE CRITIC ===============
                     critic_values = self.critic_network(states).squeeze(-1)
 
