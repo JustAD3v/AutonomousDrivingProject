@@ -231,7 +231,7 @@ class WocaRDQN:
         # rewards, dones and qvalues should all be on same device
         y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
         # calc y_main using MAIN NETWORK (network of the agent)
-        y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
+        y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device) 
         # calc loss
         loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
         loss_value = loss.item()
@@ -273,7 +273,7 @@ class WocaRDQN:
                 woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
                 y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
 
-              y_woca_predicted = self.woca_net.process_batch((states, actions, rewards, next_states, dones), self.device)
+              y_woca_predicted = self.woca_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
               woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
               self.optimize_model(woca_loss, self.woca_net)
 
@@ -282,7 +282,7 @@ class WocaRDQN:
               q_target = qvalues
               q_woca = self.woca_net.getMaxQ(next_states, self.env.action_space.n, self.device)
               y_robust = rewards + self.config.gamma * (self.k_wst * q_target + (1 - self.k_wst) * q_woca) * (1-dones)
-              predicted_robust = self.robust_net.process_batch((states, actions, rewards, next_states, dones), self.device)
+              predicted_robust = self.robust_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
               robust_loss = self.robust_net.loss_fn(predicted_robust.squeeze(), y_robust) + self.k_reg * reg_loss
               self.optimize_model(robust_loss, self.robust_net)
 

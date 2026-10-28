@@ -15,6 +15,7 @@ from Networks.StateOnlyNN import StateOnlyNN
 from Networks.ActorNetwork import ActorNetwork
 from Networks.CriticNetwork import CriticNetwork
 from Networks.NetworkFactory import NetworkFactory
+from Networks.WocaPPONN import WocaPPONN
 
 from Adversarial.RandomAdversarial import RandomAdversarial
 from Adversarial.FGSMAdversarial import FGSMAdversarial
@@ -176,7 +177,7 @@ def main():
                 "actor": ActorNetwork,
                 "critic": CriticNetwork,
                 # the worst-case network is a Q network, as in the DQN version
-                "woca": StateOnlyNN
+                "woca": WocaPPONN if train_config.ppo_continuous else StateOnlyNN
             }
             ppo_net_configs = {
                 "actor": {"out_features": env.action_space.shape[0], "continuous": True}

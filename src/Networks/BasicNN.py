@@ -57,7 +57,7 @@ class BasicNN(nn.Module):
       qvalues = self(input_tensor.to(device)) # out => (5,)
       return torch.argmax(qvalues).item()
   
-  def process_batch(self, batch_tuple, device):
+  def get_qvalues(self, batch_tuple, device):
     states, actions, _, _, _ = batch_tuple
     one_hot_actions = torch.tensor([self.one_hot(x) for x in actions]) # (B,5)
     batch_input = torch.cat((states, one_hot_actions), dim=1) # turn states = (B, 25) to => (B, 30)

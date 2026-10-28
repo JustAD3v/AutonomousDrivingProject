@@ -242,20 +242,53 @@ class WocaRPPO:
         # use wocar network to calculate minQvalue
         # use critic network to calculate the critic value
         # calculate the weight as stated in the paper : V - minQ
-        min_qvalues = self.getWocaMinQ(states)
+        if self.config.ppo_continuous:
+            action_lb, action_ub = torch.tensor(self.env.action_space.low), torch.tensor(self.env.action_space.high)
+            with torch.no_grad():
+                action_means = self.robust_actor_network(states)
+            var_actions = action_means.requires_grad_()
+            step_eps = (action_ub - action_lb) / self.grad_steps
+            
+            # find action that minimizes the value of woca network using gradient descent
+            for _ in range(self.grad_steps):
+              # attach delta to the graph to register operations on it
+              # in order to compute the auto grad
+              var_actions.requires_grad_(True)
+    
+              # operations recorded in the graph
+              worst_q = self.woca_network(torch.cat((states, var_actions), dim=1))
+
+              # uses the graph to compute gradient
+              grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
+    
+              with torch.no_grad():
+                  # don't include those calculations in the comutational graph
+                  var_actions = torch.clamp(
+                      var_actions - step_eps * torch.sign(grad),
+                      min=action_lb,
+                      max=action_ub
+                  )
+              # detach var_action from the graph so next gradient calculation
+              # is a fresh new gradient independent from the previous one
+              var_actions = var_actions.detach()
+            self.woca_network.zero_grad()
+            with torch.no_grad():
+                min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1))               
+        else:
+            min_qvalues = self.getWocaMinQ(states)
+
         critic_values = self.critic_network(states)
-        return torch.sub(critic_values, min_qvalues)
+        # detach because w(s) does not need to be part of the graph for backprop
+        # It can be treated as a constant
+        return torch.sub(critic_values, min_qvalues).detach()
 
     def calcRegularization(self, states, grad_step_size, grad_steps):
-        with torch.no_grad():
-          # w(s) does not need to be part of the graph for backprop
-          # It can be treated as a constant
-          w_states = self.getStateWeight(states)
+        w_states = self.getStateWeight(states)
         max_dist = self.getDistMax(states, grad_step_size, grad_steps)
         reg = torch.mul(w_states, max_dist)
         return reg.mean()
 
-    def filter_actions(self, lb_q, ub_q):
+    def getSubsetActions(self, lb_q, ub_q):
         actions = []
         for (lb, ub) in zip(lb_q, ub_q):
             actions.append([
@@ -272,7 +305,7 @@ class WocaRPPO:
             ])
         return actions
 
-    def getSubsetActions(self, states):
+    def getActionBounds(self, states):
         # get lower and upper bound of perturbated states
         lb_states = (states - self.attack_budget).to(
             device=self.device,
@@ -299,9 +332,7 @@ class WocaRPPO:
             x=(bounded_qvalues,),
             method='CROWN'
         )
-        # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
-        # filter actions
-        return self.filter_actions(lb_qvalues, ub_qvalues)
+        return lb_qvalues, ub_qvalues
 
     @Timer.measure("Critic network update")
     def _train_critic_network(self, states, returns):
@@ -311,13 +342,48 @@ class WocaRPPO:
 
     @Timer.measure("WOCA network update")
     def _train_woca_network(self, states, actions, rewards, next_states, dones):
-        subset_actions = self.getSubsetActions(next_states)
-        with torch.no_grad():
-          # no need to build a graph for calculating target
-          # (no backprop is computed)
-          woca_qvalues = self.getWocaMinQ(next_states, subset_actions)
-          y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
-        y_woca_predicted = self.woca_network.process_batch((states, actions, rewards, next_states, dones), self.device)
+        action_lb, action_ub = self.getActionBounds(states)
+        if self.config.ppo_continuous:
+            with torch.no_grad():
+                action_means = self.robust_actor_network(states)
+            var_actions = action_means.requires_grad_()
+            step_eps = (action_ub - action_lb) / self.grad_steps
+            
+            # find action that minimizes the value of woca network using gradient descent
+            for _ in range(self.grad_steps):
+              # attach delta to the graph to register operations on it
+              # in order to compute the auto grad
+              var_actions.requires_grad_(True)
+    
+              # operations recorded in the graph
+              worst_q = self.woca_network(torch.cat((states, var_actions), dim=1))
+
+              # uses the graph to compute gradient
+              grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
+    
+              with torch.no_grad():
+                  # don't include those calculations in the comutational graph
+                  var_actions = torch.clamp(
+                      var_actions - step_eps * torch.sign(grad),
+                      min=action_lb,
+                      max=action_ub
+                  )
+              # detach var_action from the graph so next gradient calculation
+              # is a fresh new gradient independent from the previous one
+              var_actions = var_actions.detach()
+            self.woca_network.zero_grad()
+            with torch.no_grad():
+                woca_qvalues = self.woca_network(torch.cat((next_states, var_actions), dim=1)).squeeze(1)
+        else:
+            subset_actions = self.getSubsetActions(action_lb, action_ub)
+            with torch.no_grad():
+                # no need to build a graph for calculating target
+                # (no backprop is computed)
+                woca_qvalues = self.getWocaMinQ(next_states, subset_actions)
+
+        with torch.no_grad():        
+            y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+        y_woca_predicted = self.woca_network.get_qvalues((states, actions, rewards, next_states, dones), self.device)
         woca_loss = self.woca_network.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
         self.optimize_model(woca_loss, self.woca_network)
 
@@ -333,8 +399,11 @@ class WocaRPPO:
             1.0 - self.clip_epsilon,
             1.0 + self.clip_epsilon
         )
-
-        woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        
+        if self.config.ppo_continuous:
+            woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1))
+        else:
+            woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
         woca_advantages = advantages + self.k_wst * woca_qvalues
         unclipped_objective = ratio * woca_advantages
         clipped_objective = clipped_ratio * woca_advantages

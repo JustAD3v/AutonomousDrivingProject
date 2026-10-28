@@ -124,7 +124,7 @@ class DQNTrainer:
               # rewards, dones and qvalues should all be on same device
               y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
               # calc y_main using MAIN NETWORK (network of the agent)
-              y_main = self.main_net.process_batch((states, actions, rewards, next_states, dones), self.device) 
+              y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device) 
               # calc loss
               loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
               total_loss += loss.item()
