@@ -38,7 +38,7 @@ class TrainConfig:
 
         # PPO params (used by the "ppo" trainer). PPO is on-policy, so its training
         # length is counted in environment steps (total_timesteps), not `iterations`.
-        self.total_timesteps = 2000000
+        self.total_timesteps = 200000
         self.n_steps = 2048          # steps collected per rollout
         self.ppo_batch_size = 64     # minibatch size (separate from the DQN batch_size)
         self.n_epochs = 10           # passes over each rollout

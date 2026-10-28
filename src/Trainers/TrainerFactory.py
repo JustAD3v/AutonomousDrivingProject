@@ -151,7 +151,7 @@ class TrainerFactory:
 
             case _:
                 from stable_baselines3 import DQN
-
+ 
                 sb3_kwargs = config.to_sb3_kwargs() if config else {}
                 sb3_model = DQN(policy_str, env, **sb3_kwargs)
                 return TrainerWrapper(trainer=sb3_model, trainer_type=trainer_type, config=config, seed=seed)
