@@ -13,5 +13,5 @@ class FGSMAdversarial(Adversarial):
         action = q_values.argmax()
         loss = q_values[action]
         gradients = torch.autograd.grad(outputs=loss, inputs=state_tensor)[0]
-        perturbations = self.attack_bound * torch.sign(gradients).reshape(shape)
+        perturbations = self.attack_bound * state * torch.sign(gradients).reshape(shape)
         return np.add(state, perturbations.numpy())

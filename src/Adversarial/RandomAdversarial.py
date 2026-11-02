@@ -6,5 +6,5 @@ class RandomAdversarial(Adversarial):
         super().__init__(policy, attack_bound)
 
     def disrupt(self, state):
-        perturbations = [np.random.uniform(-self.attack_bound, self.attack_bound, len(state[0])) for _ in range(len(state))]
+        perturbations = [np.random.uniform(-self.attack_bound*state, self.attack_bound*state, len(state[0])) for _ in range(len(state))]
         return np.add(state, perturbations)
