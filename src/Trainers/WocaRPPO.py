@@ -176,6 +176,42 @@ class WocaRPPO:
         # detach states to not change the computational graph on it
         states = states.detach()
 
+        # init delta with random pertubration in [-attack; attack], element-wise
+        attack = self.attack_budget * states.abs()
+
+        if self.config.ppo_continuous:
+            with torch.no_grad():
+                # kl_divergence only supports calculation between Normal objects
+                # but distributions wraps Normal into :
+                # - a TransformedDistribution(Normal, Tanh)
+                # - then an Independent(transformed) object which automates log prob summing
+                # Hopefully the kl_divergence is invariant under the tanh transformation fo the variable
+                # So we can compute the kl_div on the base Normal by unwrapping it
+                # We unwrap the distribution output 2 times :
+                # - one to unwrapp the Independent
+                # - the second to unwrap the tanh transformation  
+                clean_base = self.robust_actor_network.distribution(states).base_dist.base_dist
+
+            # rescale the uniform sample from [0, 1] to [-1, 1]
+            delta = (2.0 * torch.rand_like(states) - 1.0) * attack
+
+            # find perturbation delta that maximizes the distance using gradient ascent
+            for _ in range(grad_steps):
+                delta.requires_grad_(True)
+                p_base = self.robust_actor_network.distribution(states + delta).base_dist.base_dist
+                # we have to do the sum() because we unwrapped clean_base and p_base from Independent
+                # which was responsible for doing that automatically
+                # .mean() is equivalent to reduction="batchmean" in kl_div for discrete actions
+                dist = torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
+                grad = torch.autograd.grad(dist, delta)[0]
+                with torch.no_grad():
+                    delta = torch.clamp(delta + grad_step_size * grad, min=-attack, max=attack)
+                delta = delta.detach()
+
+            # recompute on a fresh graph so the actor can backprop through it
+            p_base = self.robust_actor_network.distribution(states + delta).base_dist.base_dist
+            return torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
+
         # get distribution from the actor logits
         with torch.no_grad():
           # don't create a graph either way it will bind probs to the actor graph
@@ -184,8 +220,6 @@ class WocaRPPO:
           logits = self.robust_actor_network(states)
           probs = F.log_softmax(logits, dim=1)
 
-        # init delta with random pertubration in [-attack; attack], element-wise
-        attack = self.attack_budget * states.abs()
         # rescale the uniform sample from [0, 1] to [-1, 1]
         delta = (2.0 * torch.rand_like(states) - 1.0) * attack
 
@@ -275,11 +309,11 @@ class WocaRPPO:
               var_actions = var_actions.detach()
             self.woca_network.zero_grad()
             with torch.no_grad():
-                min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1))               
+                min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
         else:
             min_qvalues = self.getWocaMinQ(states)
 
-        critic_values = self.critic_network(states)
+        critic_values = self.critic_network(states).squeeze(-1)
         # detach because w(s) does not need to be part of the graph for backprop
         # It can be treated as a constant
         return torch.sub(critic_values, min_qvalues).detach()
@@ -344,25 +378,25 @@ class WocaRPPO:
 
     @Timer.measure("WOCA network update")
     def _train_woca_network(self, states, actions, rewards, next_states, dones):
-        action_lb, action_ub = self.getActionBounds(states)
         if self.config.ppo_continuous:
+            action_lb, action_ub = torch.tensor(self.env.action_space.low), torch.tensor(self.env.action_space.high)
             with torch.no_grad():
-                action_means = self.robust_actor_network(states)
+                action_means = self.robust_actor_network(next_states)
             var_actions = action_means.requires_grad_()
             step_eps = (action_ub - action_lb) / self.grad_steps
-            
+
             # find action that minimizes the value of woca network using gradient descent
             for _ in range(self.grad_steps):
               # attach delta to the graph to register operations on it
               # in order to compute the auto grad
               var_actions.requires_grad_(True)
-    
+
               # operations recorded in the graph
-              worst_q = self.woca_network(torch.cat((states, var_actions), dim=1))
+              worst_q = self.woca_network(torch.cat((next_states, var_actions), dim=1))
 
               # uses the graph to compute gradient
               grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
-    
+
               with torch.no_grad():
                   # don't include those calculations in the comutational graph
                   var_actions = torch.clamp(
@@ -377,6 +411,7 @@ class WocaRPPO:
             with torch.no_grad():
                 woca_qvalues = self.woca_network(torch.cat((next_states, var_actions), dim=1)).squeeze(1)
         else:
+            action_lb, action_ub = self.getActionBounds(states)
             subset_actions = self.getSubsetActions(action_lb, action_ub)
             with torch.no_grad():
                 # no need to build a graph for calculating target
@@ -403,7 +438,7 @@ class WocaRPPO:
         )
         
         if self.config.ppo_continuous:
-            woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1))
+            woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
         else:
             woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
         woca_advantages = advantages + self.k_wst * woca_qvalues
@@ -511,7 +546,7 @@ class WocaRPPO:
                     states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = minibatch
                     states = states.float()
                     next_states = next_states.float()
-                    actions = actions.long()
+                    actions = actions.float() if self.config.ppo_continuous else actions.long()
                     old_log_probs = old_log_probs.float().detach()
                     advantages = advantages.float()
                     returns = returns.float()
