@@ -3,8 +3,6 @@ import argparse
 import torch
 import gymnasium as gym
 from stable_baselines3 import DQN
-import random
-import multiprocessing
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainConfig import TrainConfigSweep
@@ -15,9 +13,6 @@ from Policies.CustomPolicy import CustomPolicy
 from Policies.PPOPolicy import PPOPolicy
 from Networks.StateOnlyNN import StateOnlyNN
 from Networks.ActorNetwork import ActorNetwork
-from Networks.CriticNetwork import CriticNetwork
-from Networks.NetworkFactory import NetworkFactory
-from Networks.WocaPPONN import WocaPPONN
 from Utils.EnvFactory import EnvFactory
 
 from Adversarial.RandomAdversarial import RandomAdversarial
@@ -105,6 +100,13 @@ def main():
         help="Maximum perturbation bound during adversarial evaluation (default: 0.2).",
     )
     parser.add_argument(
+        "--attack_type",
+        type=str,
+        choices=["fgsm", "random"],
+        default="fgsm",
+        metavar="{fgsm, random}",
+    )
+    parser.add_argument(
         "--continuous",
         action="store_true",
         default=False,
@@ -141,6 +143,7 @@ def main():
     MODEL_TYPE = args.model_type
     NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained"
     MODEL_DIR = args.model_dir if args.model_dir else "./models"
+    ATTACK_TYPE = args.attack_type
 
     # train_config = (
     #     TrainConfigBuilder()
@@ -237,8 +240,11 @@ def main():
         if args.attack_bound:
             attack_bound = args.attack_bound
         if args.adversarial:
-            # adversarial = RandomAdversarial(policy, attack_bound)
-            adversarial = FGSMAdversarial(policy, attack_bound)
+            match ATTACK_TYPE:
+                case "random":
+                    adversarial = RandomAdversarial(policy, attack_bound)
+                case "fgsm":
+                    adversarial = FGSMAdversarial(policy, attack_bound)
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
