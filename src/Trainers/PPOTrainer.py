@@ -95,7 +95,7 @@ class PPOTrainer:
                                 self.device, 
                                 self.config.gamma, 
                                 self.config.ppo_lm)
-        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="PPO training")
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="PPO training", config=self.config)
 
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):

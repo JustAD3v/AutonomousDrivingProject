@@ -35,7 +35,7 @@ class DQNTrainer:
                                      config.batch_size,
                                      config.warmup_size,
                                      self.device)
-        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="DQN training")
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="DQN training", config=self.config)
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
     def epsilon_update(self, epsilon):
