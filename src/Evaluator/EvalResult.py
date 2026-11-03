@@ -44,6 +44,7 @@ class EvalResult(Results):
         lines[0] += f"/{data['planned_episodes']}"
         lines.append(f"Success = {data['successes']} | Crash = {data['crashes']}"
                      f" | Success rate = {data['success_rate']*100:.1f}%")
-        lines.append(f"Model = {data['model']} | Attack = {data['attack']}"
-                     f" | Attack bound = {data['attack_bound']}")
+        lines.append(f"Model = {data['model']}")
+        if data['attack'] != "NeutralAdversarial":
+            lines.append(f"Attack = {data['attack']} | Attack bound = {data['attack_bound']}")
         return lines
