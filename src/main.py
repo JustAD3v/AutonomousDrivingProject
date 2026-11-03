@@ -7,7 +7,9 @@ import random
 import multiprocessing
 
 from Trainers.TrainConfig import TrainConfigBuilder
+from Trainers.TrainConfig import TrainConfigSweep
 from Trainers.TrainerFactory import TrainerFactory
+from Trainers.TrainSweep import TrainSweep
 from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
 from Policies.PPOPolicy import PPOPolicy
@@ -16,6 +18,7 @@ from Networks.ActorNetwork import ActorNetwork
 from Networks.CriticNetwork import CriticNetwork
 from Networks.NetworkFactory import NetworkFactory
 from Networks.WocaPPONN import WocaPPONN
+from Utils.EnvFactory import EnvFactory
 
 from Adversarial.RandomAdversarial import RandomAdversarial
 from Adversarial.FGSMAdversarial import FGSMAdversarial
@@ -44,9 +47,9 @@ def main():
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["dqn", "sb3_dqn", "wocar", "ppo", "wocar_ppo"],
+        choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo"],
         default="dqn",
-        metavar="{dqn,sb3_dqn,wocar,ppo,wocar_ppo}",
+        metavar="{dqn,sb3_dqn,wocar_dqn,ppo,wocar_ppo}",
     )
     parser.add_argument(
         "--net_file",
@@ -55,6 +58,15 @@ def main():
         help=(
             "Path of model file to load for evaluation or save after training "
             "(default: ./models/targetNetwork_trained)."
+        ),
+    )
+    parser.add_argument(
+        "--model_dir",
+        type=str,
+        metavar="PATH",
+        help=(
+            "Existing directory where the sweep saves one model file per run "
+            "(default: ./models). Only used with --sweep."
         ),
     )
     parser.add_argument(
@@ -98,6 +110,12 @@ def main():
         default=False,
         help="Use the continuous action space (PPO only), for training and evaluation.",
     )
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        default=False,
+        help="Launch sweep runs (experimental feature, test only)",
+    )
 
     args = parser.parse_args()
 
@@ -119,8 +137,10 @@ def main():
     }
 
     TRAIN = args.train
+    SWEEP = args.sweep
     MODEL_TYPE = args.model_type
-    NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
+    NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained"
+    MODEL_DIR = args.model_dir if args.model_dir else "./models"
 
     # train_config = (
     #     TrainConfigBuilder()
@@ -167,42 +187,29 @@ def main():
     if args.continuous:
         train_config.ppo_continuous = True
 
-    env_config = {"action": {"type": "ContinuousAction"}, "offroad_terminal": True} if train_config.ppo_continuous else None
-    env = gym.make("highway-fast-v0", config=env_config)
+    env_config = EnvFactory.env_config(train_config)
+    env = EnvFactory.create(train_config)
 
     if TRAIN:
-        if MODEL_TYPE in ("ppo", "wocar_ppo"):
-            # factory for PPO
-            ppo_net_types = {
-                "actor": ActorNetwork,
-                "critic": CriticNetwork,
-                # the worst-case network is a Q network, as in the DQN version
-                "woca": WocaPPONN if train_config.ppo_continuous else StateOnlyNN
-            }
-            ppo_net_configs = {
-                "actor": {"out_features": env.action_space.shape[0], "continuous": True}
-            } if train_config.ppo_continuous else None
-            network_factory=NetworkFactory(train_config=train_config, network_types=ppo_net_types, configs=ppo_net_configs)
+        if SWEEP:
+            sweep = TrainConfigSweep(train_config).vary("attack_budget", [0.0, 0.05, 0.1]).seeds(2)
+            runs = TrainSweep(sweep, trainer_type=MODEL_TYPE, model_dir=MODEL_DIR, name="eps-sweep").run()
+            print(f"Runs: {runs}")
         else:
-            # factory for DQN
-            network_factory=NetworkFactory(train_config=train_config, network_types=StateOnlyNN)
-        
-        trainer = TrainerFactory.create_trainer(
-            env=env,
-            config=train_config,
-            trainer_type=MODEL_TYPE,
-            network_factory=network_factory,
-            policy_str="MlpPolicy",
-            seed=train_config.seed
-        )
-        results = trainer.learn()
-        trainer.save(NETWORK_FILE)
-        # if results is not None:
-        #     results.plot()
+            trainer = TrainerFactory.create_from_config(
+                config=train_config,
+                trainer_type=MODEL_TYPE,
+                env=env,
+                policy_str="MlpPolicy"
+            )
+            results = trainer.learn()
+            trainer.save(NETWORK_FILE)
+            # if results is not None:
+            #     results.plot()
 
     else:
         match MODEL_TYPE:
-            case "dqn" | "wocar":
+            case "dqn" | "wocar_dqn":
                 model = StateOnlyNN()
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = CustomPolicy(network=model, action_space=env.action_space)

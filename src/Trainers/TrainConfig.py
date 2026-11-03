@@ -1,8 +1,11 @@
+import itertools
 import json
 import random
 
 class TrainConfig:
     def __init__(self):
+        self.env_name = "highway-fast-v0"
+        self.env_config = None
         self.gamma = 0.95
         self.epsilon_start = 1.0
         self.epsilon = self.epsilon_start
@@ -40,6 +43,19 @@ class TrainConfig:
         self.__dict__.update(json.loads(value))
         return self
 
+    def copy(self):
+        return TrainConfig().from_json(self.to_json())
+
+    def with_overrides(self, overrides):
+        config = self.copy()
+        for name, value in overrides.items():
+            if not hasattr(config, name):
+                raise AttributeError(f"Unknown TrainConfig parameter: {name}")
+            setattr(config, name, value)
+        if "epsilon_start" in overrides:
+            config.epsilon = config.epsilon_start
+        return config
+
     def to_sb3_kwargs(self):
         return {
             "learning_rate": self.learning_rate,
@@ -56,9 +72,55 @@ class TrainConfig:
             "seed": self.seed
         }
 
+class TrainConfigSweep:
+
+    def __init__(self, base_config=None):
+        self.base_config = base_config if base_config is not None else TrainConfig()
+        self.varied = {}
+
+    def vary(self, name, values):
+        if not hasattr(self.base_config, name):
+            raise AttributeError(f"Unknown TrainConfig parameter: {name}")
+        self.varied[name] = list(values)
+        return self
+
+    def seeds(self, values):
+        if isinstance(values, int):
+            values = [random.getrandbits(32) for _ in range(values)]
+        return self.vary("seed", values)
+
+    def points(self):
+        # a point represent a set of concrete values for parameters to train on
+        names = list(self.varied)
+        # product(*([a, b, c])) unpacks into -> product(a, b, c)
+        # product gives cartesian product of attributes to test every possible combination
+        for combination in itertools.product(*(self.varied[name] for name in names)):
+            # yield returns the next value of the iterator at each call
+            yield dict(zip(names, combination))
+
+    def configs(self):
+        for overrides in self.points():
+            # yield returns the next value of the iterator at each call
+            yield overrides, self.base_config.with_overrides(overrides)
+
+    def __len__(self):
+        count = 1
+        for values in self.varied.values():
+            count *= len(values)
+        return count
+
+
 class TrainConfigBuilder:
     def __init__(self):
         self._config = TrainConfig()
+
+    def env_name(self, value):
+        self._config.env_name = value
+        return self
+
+    def env_config(self, value):
+        self._config.env_config = value
+        return self
 
     def gamma(self, value):
         self._config.gamma = value

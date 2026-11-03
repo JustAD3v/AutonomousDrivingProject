@@ -21,7 +21,7 @@ class TrainerWrapper:
         match self.trainer_type:
             case "dqn":
                 torch.save(self.trainer.target_net.state_dict(), path)
-            case "wocar":
+            case "wocar_dqn":
                 torch.save(self.trainer.robust_net.state_dict(), path)
             case "ppo":
                 torch.save(self.trainer.actor_network.state_dict(), path)

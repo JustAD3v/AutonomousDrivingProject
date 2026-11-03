@@ -73,18 +73,18 @@ py src/main.py --train --model_type dqn
 
 The supported `--model_type` values are:
 
-| Value     | Trainer / model              |
-| --------- | ---------------------------- |
-| `dqn`     | Project's custom DQN         |
-| `wocar`   | Robust WOCA-R DQN            |
-| `ppo`     | Project's PPO implementation |
-| `sb3_dqn` | Stable-Baselines3 DQN        |
+| Value       | Trainer / model              |
+| ----------- | ---------------------------- |
+| `dqn`       | Project's custom DQN         |
+| `wocar_dqn` | Robust WOCA-R DQN            |
+| `ppo`       | Project's PPO implementation |
+| `sb3_dqn`   | Stable-Baselines3 DQN        |
 
 Examples:
 
 ```powershell
 py src/main.py --train --model_type ppo --net_file models\ppo-agent.pt
-py src/main.py --train --model_type wocar --net_file models\wocar-agent.pt
+py src/main.py --train --model_type wocar_dqn --net_file models\wocar-agent.pt
 py src/main.py --train --model_type sb3_dqn --net_file models\sb3-agent.zip
 ```
 
@@ -141,7 +141,7 @@ python src/main.py --model_type dqn --net_file models\targetNetwork_trained --ad
 | Option                                 | Description                                                    |
 | -------------------------------------- | -------------------------------------------------------------- |
 | `--train`                              | Train and save a model instead of evaluating one.              |
-| `--model_type {dqn,sb3_dqn,wocar,ppo}` | Select the training/evaluation model. Defaults to `dqn`.       |
+| `--model_type {dqn,sb3_dqn,wocar_dqn,ppo}` | Select the training/evaluation model. Defaults to `dqn`.   |
 | `--net_file PATH`                      | Checkpoint path to load for evaluation or save after training. |
 | `--config PATH`                        | JSON file containing training configuration overrides.         |
 | `--seed INTEGER`                       | Set the training/evaluation seed.                              |
