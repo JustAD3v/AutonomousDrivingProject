@@ -17,13 +17,9 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
     env = gym.make(env_name, config=env_config)
     state, _ = env.reset()
     buffer = PPOBuffer(buffer_size, device, gamma, ppo_lm)
-    episode_return = 0.0
-    episode_length = 0
     for _ in range(buffer_size):
         action, log_action_prob = policy.predict(state, device=device)
         next_state, reward, term, trunc, _ = env.step(policy.to_env_action(action))
-        episode_return += reward
-        episode_length += 1
         state_flat = np.asarray(state, dtype=np.float32).flatten()
         with torch.no_grad():
             state_tensor = torch.as_tensor(
@@ -56,9 +52,6 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
                     )
                     extra_critic_value = critic_network(next_state_tensor).item()
             buffer.finish_episode(extra_critic_value)
-            print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
-            episode_return = 0.0
-            episode_length = 0
             # Reset the environment only if the episode ended.
             if term or trunc:
                 state, _ = env.reset()
@@ -102,7 +95,7 @@ class PPOTrainer:
                                 self.device, 
                                 self.config.gamma, 
                                 self.config.ppo_lm)
-        self.record = TrainResult(self.config.iterations)
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="PPO training", config=self.config, timer=self.timer)
 
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
@@ -160,16 +153,11 @@ class PPOTrainer:
                     self.buffer.merge(res)
             else:
                 state, _ = self.env.reset()
-                episode_return = 0.0
-                episode_length = 0
 
                 for _ in range(self.config.buffer_size):
                     # ========= SAMPLE COLLECTION =============
                     action, log_action_prob = self._predict(state)
                     next_state, reward, term, trunc, _ = self._environment_step(action)
-
-                    episode_return += reward
-                    episode_length += 1
 
                     state_flat = np.asarray(state, dtype=np.float32).flatten()
                     with torch.no_grad():
@@ -208,11 +196,6 @@ class PPOTrainer:
         
                         self.buffer.finish_episode(extra_critic_value)
 
-                        print(f"Episode finished (len={episode_length}), tot_return={episode_return}")
-
-                        episode_return = 0.0
-                        episode_length = 0
-
                         # Reset the environment only if the episode ended.
                         if term or trunc:
                             state, _ = self.env.reset()
@@ -221,6 +204,8 @@ class PPOTrainer:
                             state = next_state
                     else:
                         state = next_state
+
+            self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
 
             # ============ GET BATCH =====================
             minibatches = self.buffer.get_batch()
@@ -260,10 +245,11 @@ class PPOTrainer:
             
             self.buffer.reset()
             iteration += 1
-            print(f"[*] Iteration Finished ({iteration}/{self.config.iterations})")
+            self.record.report_iteration(iteration)
     
     def learn(self) -> TrainResult:
         self.timer.reset()
         self._train()
+        self.record.report_final()
         self.timer.report()
         return self.record

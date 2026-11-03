@@ -3,6 +3,50 @@ import random
 
 class TrainerFactory:
     @staticmethod
+    def create_network_factory(env, config, trainer_type="dqn"):
+        from Networks.NetworkFactory import NetworkFactory
+        from Networks.StateOnlyNN import StateOnlyNN
+
+        if trainer_type in ("ppo", "wocar_ppo"):
+            from Networks.ActorNetwork import ActorNetwork
+            from Networks.CriticNetwork import CriticNetwork
+            from Networks.WocaPPONN import WocaPPONN
+
+            network_types = {
+                "actor": ActorNetwork,
+                "critic": CriticNetwork,
+                # the worst-case network is a Q network, as in the DQN version
+                "woca": WocaPPONN if config.ppo_continuous else StateOnlyNN
+            }
+            configs = {
+                "actor": {"out_features": env.action_space.shape[0], "continuous": True}
+            } if config.ppo_continuous else None
+            return NetworkFactory(train_config=config, network_types=network_types, configs=configs)
+
+        return NetworkFactory(train_config=config, network_types=StateOnlyNN)
+
+    @staticmethod
+    def create_from_config(
+        config,
+        trainer_type="dqn",
+        env=None,
+        policy_str="MlpPolicy"
+    ) -> TrainerWrapper:
+        """Build the environment, the networks and the trainer from a single TrainConfig."""
+        from Utils.EnvFactory import EnvFactory
+
+        if env is None:
+            env = EnvFactory.create(config)
+        return TrainerFactory.create_trainer(
+            env=env,
+            config=config,
+            network_factory=TrainerFactory.create_network_factory(env, config, trainer_type),
+            trainer_type=trainer_type,
+            policy_str=policy_str,
+            seed=config.seed
+        )
+
+    @staticmethod
     def create_trainer(
         env,
         config,
@@ -30,7 +74,7 @@ class TrainerFactory:
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
-            case "wocar":
+            case "wocar_dqn":
                 from Trainers.WocaRDQN import WocaRDQN
                 from Policies.CustomPolicy import CustomPolicy
 

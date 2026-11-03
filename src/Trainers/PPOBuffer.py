@@ -15,6 +15,7 @@ class PPOBuffer:
         self.return_buffer = np.zeros(self.buffer_size)
         self.ptr = 0
         self.episode_start = 0
+        self.episode_stats = []
         self.full = False
         
     def push(self, state_tuple):
@@ -36,6 +37,7 @@ class PPOBuffer:
             self.return_buffer = np.concatenate((self.return_buffer, 
                                                 worker_PPOBuffer.return_buffer))
             self.ptr += worker_PPOBuffer.ptr
+            self.episode_stats += worker_PPOBuffer.episode_stats
 
     def finish_episode(self, extra_critic_value):
         segment_len = self.ptr - self.episode_start
@@ -66,6 +68,7 @@ class PPOBuffer:
 
         self.return_buffer[segment_slice] = returns
         self.advantage_buffer[segment_slice] = advantages
+        self.episode_stats.append((segment_len, float(rewards.sum())))
         self.episode_start = self.ptr
          
         
