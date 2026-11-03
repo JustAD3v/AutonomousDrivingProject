@@ -31,6 +31,7 @@ class TrainConfig:
         self.ppo_nworkers = 8
         self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
         self.ppo_continuous = False
+        self.log_freq = 10
 
     def to_json(self):
         return json.dumps(self.__dict__)
@@ -158,6 +159,10 @@ class TrainConfigBuilder:
 
     def ppo_continuous(self, value):
         self._config.ppo_continuous = value
+        return self
+
+    def log_freq(self, value):
+        self._config.log_freq = value
         return self
 
     def gradient_steps(self, value):

@@ -45,7 +45,7 @@ class WocaRDQN:
                                      config.batch_size,
                                      config.warmup_size,
                                      self.device)
-        self.record = TrainResult(self.config.iterations)
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="WocaR-DQN training")
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
         self._bounded_robust_net = None
@@ -292,7 +292,6 @@ class WocaRDQN:
     def _train(self):
         print("[+] === Training starts ===")
         iteration = 0
-        episode_count = 0
         while iteration < self.config.iterations:
           state, _ = self.env.reset()
           done = False
@@ -338,12 +337,11 @@ class WocaRDQN:
             state = new_state
             self.config.epsilon = self.epsilon_update(self.config.epsilon)        
           
-          print(f"[*] ({iteration}/{self.config.iterations}) | Episode finished (len={nb_steps}), avg_loss = {total_loss/nb_steps}, tot_return={episode_return}, epsilon={self.config.epsilon}")
-          episode_count += 1
-          self.record.add_loss(total_loss/nb_steps)
-          self.record.add_episode_return(episode_return)
-          self.record.add_epsilon(self.config.epsilon)
-          self.record.register_episode_count(episode_count)
+          self.record.add_episode(nb_steps,
+                                  episode_return,
+                                  loss=total_loss/nb_steps,
+                                  epsilon=self.config.epsilon,
+                                  iteration=iteration)
 
     def learn(self) -> TrainResult:
         self.timer.reset()
@@ -353,6 +351,7 @@ class WocaRDQN:
         print(f"[+] Warmup done ! (Duration = {round(warmup_duration, 2)}s)")
 
         self._train()
+        self.record.report_final()
 
         training_duration = self.timer.counters["Training duration"]
 
