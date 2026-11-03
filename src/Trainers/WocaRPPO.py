@@ -107,7 +107,7 @@ class WocaRPPO:
                                         self.device,
                                         self.config.gamma,
                                         self.config.ppo_lm)
-        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="WocaR-PPO training", config=self.config)
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="WocaR-PPO training", config=self.config, timer=self.timer)
 
         self._bounded_robust_net = None
 

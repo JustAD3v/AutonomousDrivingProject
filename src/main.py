@@ -204,8 +204,8 @@ def main():
             )
             results = trainer.learn()
             trainer.save(NETWORK_FILE)
-            # if results is not None:
-            #     results.plot()
+            if results is not None:
+                results.plot()
 
     else:
         match MODEL_TYPE:
@@ -247,8 +247,9 @@ def main():
                             render_delay=render_delay,
                             render_mode=render_mode,
                             adversarial=adversarial,
+                            model=MODEL_TYPE,
                             seed=args.seed if args.seed else None)
-        evaluator.eval()
+        results = evaluator.eval()
 
 if __name__ == "__main__":
     main()

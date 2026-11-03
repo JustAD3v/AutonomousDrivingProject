@@ -45,7 +45,7 @@ class WocaRDQN:
                                      config.batch_size,
                                      config.warmup_size,
                                      self.device)
-        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="WocaR-DQN training", config=self.config)
+        self.record = TrainResult(self.config.iterations, self.config.log_freq, name="WocaR-DQN training", config=self.config, timer=self.timer)
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
         self._bounded_robust_net = None
