@@ -19,6 +19,7 @@ class PPOBuffer:
         
     def push(self, state_tuple):
         # state_tuple = (state, action, reward, log_p, critic_value)
+        # subclasses may append extra elements after critic_value
         if self.ptr >= self.buffer_size:
             raise IndexError("PPO buffer is full")
         self.buffer.append(state_tuple)
@@ -45,7 +46,7 @@ class PPOBuffer:
         returns = np.zeros(segment_len)
 
         rewards = np.array([e[2] for e in segment])
-        critic_values = np.array([e[-1] for e in segment] + [extra_critic_value])        
+        critic_values = np.array([e[4] for e in segment] + [extra_critic_value])        
 
         # calculate the advantages using GAE method + calculate return
         gae = 0
@@ -68,8 +69,7 @@ class PPOBuffer:
         self.episode_start = self.ptr
          
         
-    def get_batch(self, minibatch_size=1):
-        assert self.ptr == self.buffer_size
+    def batch_tensors(self):
         states = np.stack([x[0] for x in self.buffer])
         actions = np.array([x[1] for x in self.buffer]) 
         log_action_probs = torch.tensor(
@@ -80,13 +80,17 @@ class PPOBuffer:
         advantages = (self.advantage_buffer - self.advantage_buffer.mean()) / (self.advantage_buffer.std() + 1e-8)
         returns = self.return_buffer 
 
-        result = (
+        return (
             torch.from_numpy(states).to(self.device),
             torch.from_numpy(actions).to(self.device),
             log_action_probs.to(self.device),
             torch.from_numpy(advantages).to(self.device),
             torch.tensor(returns, dtype=torch.float32).to(self.device)
         )
+
+    def get_batch(self, minibatch_size=1):
+        assert self.ptr == self.buffer_size
+        result = self.batch_tensors()
 
         # split_tensors = [
         # (states_split, ...), 

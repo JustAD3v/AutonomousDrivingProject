@@ -20,7 +20,7 @@ class TrainConfig:
         self.seed = random.getrandbits(32)
         self.k_wst = 0.5
         self.k_reg = 0.2
-        self.attack_budget = 0.5
+        self.attack_budget = 0.05
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
         self.ppo_actor_update_steps = 4
