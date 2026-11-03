@@ -118,6 +118,71 @@ def main():
         default=False,
         help="Launch sweep runs (experimental feature, test only)",
     )
+args = parser.parse_args()
+
+fast_env_config = {
+    "lanes_count": 4,
+    "vehicles_count": 50,
+    "duration": 30,
+    "ego_spacing": 2,
+    "vehicles_density": 1.5,
+    "collision_reward": -10,
+    "right_lane_reward": 0.1,
+    "high_speed_reward": 0.4,
+    "lane_change_reward": 0,
+    "reward_speed_range": [20, 30],
+    "normalize_reward": True,
+    "offroad_terminal": False,
+    "simulation_frequency": 5,
+    "policy_frequency": 1,
+}
+
+TRAIN = args.train
+USE_CUSTOM = args.use_custom
+NETWORK_FILE = args.net_file if args.net_file else "./models/targetNetwork_trained" 
+
+train_config = (
+    TrainConfigBuilder()
+    .epsilon_start(1.0)
+    .epsilon_min(0.01)
+    .epsilon_decay(0.997)
+    .buffer_size(15000)
+    .warmup_size(400)
+    .batch_size(32)
+    .gamma(0.8)
+    .copy_freq(50)
+    .iterations(2e4)
+    .exploration_frac(0.1)
+    .learning_rate(5e-4)
+    .train_freq(1)
+    .gradient_steps(1)
+    .policy_kwargs(dict(net_arch=[256, 256]))
+    .build()
+)
+
+if args.config:
+    with open(args.config) as f:
+        train_config.from_json(f.read())
+
+# overwrite seed if in args
+if args.seed:
+    train_config.seed = args.seed
+
+
+env = gym.make("highway-fast-v0", config=None)
+
+if TRAIN:
+    main_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    target_network = StateOnlyNN(learning_rate=train_config.learning_rate)
+    trainer = TrainerFactory.create_trainer(
+        env=env,
+        config=train_config,
+        use_custom=USE_CUSTOM,
+        main_network=main_network,
+        target_network=target_network,
+        policy_str="MlpPolicy",
+        seed=train_config.seed
+    )
 
     args = parser.parse_args()
 
