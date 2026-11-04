@@ -327,4 +327,16 @@ class TrainConfigBuilder:
         return self
 
     def build(self):
-        return self._config
+        return self._config 
+    
+    def eval_freq(self, value):
+        self._config.eval_freq = value
+        return self
+
+    def best_model_save_path(self, value):
+        self._config.best_model_save_path = value
+        return self
+
+    def log_path(self, value):
+        self._config.log_path = value
+        return self

@@ -10,5 +10,6 @@ tb_logs/
 *tfevents*
 *Zone.Identifier
 .pytest_cache/
-.env
+.env/
 *.zip
+logs/

@@ -7,12 +7,13 @@ class TrainerWrapper:
         self.trainer = trainer
         self.trainer_type = trainer_type
         self.config = config
+        self.callback = callback
         self.set_seed(seed)
 
     def learn(self):
         match self.trainer_type:
             case "sb3_dqn":
-                self.trainer.learn(total_timesteps=self.config.iterations)
+                self.trainer.learn(total_timesteps=self.config.iterations, callback=self.callback)
                 return None
                 #case for sb3-ppo added here
             case "sb3-ppo":
