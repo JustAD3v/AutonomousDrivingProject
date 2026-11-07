@@ -45,7 +45,7 @@ class TrainerWrapper:
 
     def predict(self, state, deterministic=True):
         match self.trainer_type:
-            case "sb3_dqn" | "ppo":
+            case "sb3_dqn" | "sb3-ppo":
                 return self.trainer.predict(state, deterministic=deterministic)
             case "ppo" | "wocar_ppo":
                 action, _ = self.trainer.policy.predict(state)
