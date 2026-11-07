@@ -2,8 +2,8 @@ import torch
 import random
 import numpy as np
 
-class TrainerWrapper:
-    def __init__(self, trainer, trainer_type="dqn", config=None, seed=random.randint(0, 2**32 - 1)):
+class TrainerWrapper:      #did we remove callback=None by accident?
+    def __init__(self, trainer, trainer_type="dqn", config=None, seed=random.randint(0, 2**32 - 1), callback=None):
         self.trainer = trainer
         self.trainer_type = trainer_type
         self.config = config
