@@ -108,7 +108,7 @@ class TrainerFactory:
                 ppo_kwargs["seed"] = seed
                 train_env = env
                 if config.n_envs > 1:
-                    # Windows doesn't support 'fork' multiprocessing. Use DummyVecEnv on Windows, SubprocVecEnv on Linux/Mac.
+                    # Windows doesn't support 'fork' multiprocessing. Use DummyVecEnv on Windows, SubprocVecEnv on Linux/Mac. Just use linux dude:)
                     vec_env_cls = DummyVecEnv if sys.platform == "win32" else SubprocVecEnv
                     vec_env_kwargs = {} if sys.platform == "win32" else dict(start_method="fork")
                 
