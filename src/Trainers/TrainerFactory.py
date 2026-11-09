@@ -1,5 +1,11 @@
 from Trainers.TrainerWrapper import TrainerWrapper
 import random
+import sys
+import gymnasium as gym
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+
 
 class TrainerFactory:
     @staticmethod
@@ -96,6 +102,42 @@ class TrainerFactory:
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
+            case "sb3-ppo":
+                from stable_baselines3 import PPO
+                ppo_kwargs = config.to_ppo_kwargs()
+                ppo_kwargs["seed"] = seed
+                train_env = env
+                if config.n_envs > 1:
+                    # Windows doesn't support 'fork' multiprocessing. Use DummyVecEnv on Windows, SubprocVecEnv on Linux/Mac. Just use linux dude:)
+                    vec_env_cls = DummyVecEnv if sys.platform == "win32" else SubprocVecEnv
+                    vec_env_kwargs = {} if sys.platform == "win32" else dict(start_method="fork")
+                
+                    train_env = make_vec_env(
+                        env.spec.id, 
+                        n_envs=config.n_envs, 
+                        seed=seed,
+                        vec_env_cls=vec_env_cls,
+                        vec_env_kwargs=vec_env_kwargs
+                    )
+                    # n_steps counts per environment: split it so one rollout stays 2048 steps
+                    ppo_kwargs["n_steps"] = max(1, config.n_steps // config.n_envs)
+                
+                ppo_model = PPO(policy_str, train_env, **ppo_kwargs)
+
+                # Setup EvalCallback for best model saving
+                eval_env = gym.make(env.spec.id, config=env.unwrapped.config)
+                eval_callback = EvalCallback(
+                    eval_env,
+                    best_model_save_path=config.best_model_save_path,
+                    log_path=config.log_path,
+                    eval_freq=max(1, config.eval_freq // config.n_envs),
+                    deterministic=True,
+                    render=False,
+                    verbose=1
+                )
+
+                return TrainerWrapper(trainer=ppo_model, trainer_type=trainer_type, config=config, seed=seed, callback=eval_callback)
+
             case "ppo":
                 from Trainers.PPOTrainer import PPOTrainer
                 from Policies.PPOPolicy import PPOPolicy
@@ -136,7 +178,20 @@ class TrainerFactory:
 
             case _:
                 from stable_baselines3 import DQN
-
+ 
                 sb3_kwargs = config.to_sb3_kwargs() if config else {}
                 sb3_model = DQN(policy_str, env, **sb3_kwargs)
-                return TrainerWrapper(trainer=sb3_model, trainer_type=trainer_type, config=config, seed=seed)
+
+                # Setup EvalCallback for best model saving
+                eval_env = gym.make(env.spec.id, config=env.unwrapped.config)
+                eval_callback = EvalCallback(
+                    eval_env,
+                    best_model_save_path=config.best_model_save_path,
+                    log_path=config.log_path,
+                    eval_freq=config.eval_freq,
+                    deterministic=True,
+                    render=False,
+                    verbose=1
+                )
+
+                return TrainerWrapper(trainer=sb3_model, trainer_type=trainer_type, config=config, seed=seed, callback=eval_callback)

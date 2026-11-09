@@ -2,7 +2,7 @@ import argparse
 
 import torch
 import gymnasium as gym
-from stable_baselines3 import DQN
+from stable_baselines3 import DQN, PPO
 
 from Trainers.TrainConfig import TrainConfigBuilder
 from Trainers.TrainConfig import TrainConfigSweep
@@ -42,9 +42,9 @@ def main():
     parser.add_argument(
         "--model_type",
         type=str,
-        choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo"],
+        choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo", "sb3-ppo"],
         default="dqn",
-        metavar="{dqn,sb3_dqn,wocar_dqn,ppo,wocar_ppo}",
+        metavar="{dqn,sb3_dqn,wocar_dqn,ppo,wocar_ppo,sb3-ppo}",
     )
     parser.add_argument(
         "--net_file",
@@ -121,23 +121,6 @@ def main():
 
     args = parser.parse_args()
 
-    fast_env_config = {
-        "lanes_count": 4,
-        "vehicles_count": 50,
-        "duration": 30,
-        "ego_spacing": 2,
-        "vehicles_density": 1.5,
-        "collision_reward": -10,
-        "right_lane_reward": 0.1,
-        "high_speed_reward": 0.4,
-        "lane_change_reward": 0,
-        "reward_speed_range": [20, 30],
-        "normalize_reward": True,
-        "offroad_terminal": False,
-        "simulation_frequency": 5,
-        "policy_frequency": 1,
-    }
-
     TRAIN = args.train
     SWEEP = args.sweep
     MODEL_TYPE = args.model_type
@@ -145,26 +128,7 @@ def main():
     MODEL_DIR = args.model_dir if args.model_dir else "./models"
     ATTACK_TYPE = args.attack_type
 
-    # train_config = (
-    #     TrainConfigBuilder()
-    #     .epsilon_start(1.0)
-    #     .epsilon_min(0.01)
-    #     .epsilon_decay(0.997)
-    #     .buffer_size(15000)
-    #     .warmup_size(400)
-    #     .batch_size(32)
-    #     .gamma(0.95)
-    #     .copy_freq(50)
-    #     .iterations(200)
-    #     .exploration_frac(0.1)
-    #     .learning_rate(5e-4)
-    #     .train_freq(1)
-    #     .gradient_steps(1)
-    #     .policy_kwargs(dict(net_arch=[256, 256]))
-    #     .build()
-    # )
-
-    # PPO
+    # PPO / Default Config setup
     train_config = (
         TrainConfigBuilder()
         .buffer_size(800)
@@ -225,6 +189,8 @@ def main():
                 policy = PPOPolicy(network=model, action_space=env.action_space)
             case "sb3_dqn":
                 policy = DQN.load(NETWORK_FILE)
+            case "sb3-ppo":
+                policy = PPO.load(NETWORK_FILE)
             case _:
                 policy = DQN.load(NETWORK_FILE)
 

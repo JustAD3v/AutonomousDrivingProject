@@ -36,6 +36,25 @@ class TrainConfig:
         self.ppo_continuous = False
         self.log_freq = 10
 
+        # PPO params (used by the "ppo" trainer). PPO is on-policy, so its training
+        # length is counted in environment steps (total_timesteps), not `iterations`.
+        self.total_timesteps = 200000
+        self.n_steps = 2048          # steps collected per rollout
+        self.ppo_batch_size = 64     # minibatch size (separate from the DQN batch_size)
+        self.n_epochs = 10           # passes over each rollout
+        self.ppo_gamma = 0.90
+        self.gae_lambda = 0.8
+        self.clip_range = 0.2
+        self.ent_coef = 0.01
+        self.vf_coef = 0.5
+        self.max_grad_norm = 0.5
+        self.ppo_net_arch = [256, 256]   # same width as the DQN network, for a fair comparison
+        self.tensorboard_log = None      # e.g. "./tb_logs/" (needs tensorboard installed)
+        self.n_envs = 8 #number of envs. 
+        self.eval_freq = 5000
+        self.best_model_save_path = "./logs/"
+        self.log_path = "./logs/"
+
     def to_json(self):
         return json.dumps(self.__dict__)
 
@@ -70,6 +89,26 @@ class TrainConfig:
             "policy_kwargs": self.policy_kwargs,
             "exploration_final_eps": self.epsilon_min,
             "seed": self.seed
+        }
+
+    def to_ppo_kwargs(self):
+        return {
+            "learning_rate": self.learning_rate,
+            "n_steps": self.n_steps,
+            "batch_size": self.ppo_batch_size,
+            "n_epochs": self.n_epochs,
+            "gamma": self.ppo_gamma,
+            "gae_lambda": self.gae_lambda,
+            "clip_range": self.clip_range,
+            "ent_coef": self.ent_coef,
+            "vf_coef": self.vf_coef,
+            "max_grad_norm": self.max_grad_norm,
+            # separate actor (pi) and critic (vf) networks of the same size
+            "policy_kwargs": dict(net_arch=dict(pi=list(self.ppo_net_arch), vf=list(self.ppo_net_arch))),
+            "tensorboard_log": self.tensorboard_log,
+            "verbose": 1,
+            "seed": self.seed,
+            "device": "cpu",
         }
 
 class TrainConfigSweep:
@@ -108,7 +147,6 @@ class TrainConfigSweep:
         for values in self.varied.values():
             count *= len(values)
         return count
-
 
 class TrainConfigBuilder:
     def __init__(self):
@@ -239,5 +277,66 @@ class TrainConfigBuilder:
         self._config.seed = value
         return self
     
+    # ---- PPO ----
+    def total_timesteps(self, value):
+        self._config.total_timesteps = value
+        return self
+
+    def n_steps(self, value):
+        self._config.n_steps = value
+        return self
+
+    def ppo_batch_size(self, value):
+        self._config.ppo_batch_size = value
+        return self
+
+    def n_epochs(self, value):
+        self._config.n_epochs = value
+        return self
+
+    def ppo_gamma(self, value):
+        self._config.ppo_gamma = value
+        return self
+
+    def gae_lambda(self, value):
+        self._config.gae_lambda = value
+        return self
+
+    def clip_range(self, value):
+        self._config.clip_range = value
+        return self
+
+    def ent_coef(self, value):
+        self._config.ent_coef = value
+        return self
+
+    def vf_coef(self, value):
+        self._config.vf_coef = value
+        return self
+
+    def max_grad_norm(self, value):
+        self._config.max_grad_norm = value
+        return self
+
+    def ppo_net_arch(self, value):
+        self._config.ppo_net_arch = value
+        return self
+
+    def tensorboard_log(self, value):
+        self._config.tensorboard_log = value
+        return self
+
     def build(self):
-        return self._config
+        return self._config 
+    
+    def eval_freq(self, value):
+        self._config.eval_freq = value
+        return self
+
+    def best_model_save_path(self, value):
+        self._config.best_model_save_path = value
+        return self
+
+    def log_path(self, value):
+        self._config.log_path = value
+        return self

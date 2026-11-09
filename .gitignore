@@ -4,3 +4,12 @@ __pycache__/
 *$py.class
 models/
 .venv/
+ppo_highway_tensorboard/
+ppo_highway_model.zip
+tb_logs/
+*tfevents*
+*Zone.Identifier
+.pytest_cache/
+.env/
+*.zip
+logs/
