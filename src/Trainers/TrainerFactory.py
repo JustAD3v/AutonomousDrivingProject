@@ -152,7 +152,7 @@ class TrainerFactory:
                     actor_network=actor_network,
                     critic_network=critic_network,
                     policy=policy,
-                    env=env
+                    env=env,
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
