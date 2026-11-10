@@ -239,12 +239,15 @@ python src/main.py --model_type dqn --net_file models\targetNetwork_trained --ad
 ```
 
 `--attack_bound` is not an absolute perturbation size: it is a fraction of the
-average value of each observation feature. Both attacks compute, once, the
-mean over the rows (the vehicles) of the observation for every feature, and
-scale the perturbation of that feature by `attack_bound * mean_feature`. The
-bound is therefore fixed, but relative to a realistic magnitude per feature,
-so a given `--attack_bound` perturbs features of different scales (positions,
-speeds, ...) by a comparable proportion instead of overwhelming the small ones.
+range of each observation feature. Both attacks read those ranges from the
+evaluated environment (its observation `features` and `features_range`) and
+scale the perturbation of a feature by `attack_bound * half_range_feature`.
+Features the environment normalizes are mapped to `[-1, 1]`, so their half-range
+is `1`; features it leaves unnormalized keep their own range (`presence` lives in
+`[0, 1]`, half-range `0.5`). The bound is therefore fixed, but relative to the
+range of every feature, so a given `--attack_bound` perturbs features of
+different scales (positions, speeds, ...) by a comparable proportion instead of
+overwhelming the small ones.
 
 ### Available options
 

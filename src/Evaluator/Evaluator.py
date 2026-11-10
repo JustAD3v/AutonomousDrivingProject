@@ -13,7 +13,7 @@ class Evaluator:
     def __init__(self, 
                  policy, 
                  nb_episodes, 
-                 env_config,
+                 env=None,
                  render_mode=None, 
                  render_delay=0.05,
                  use_gpu=False,
@@ -26,8 +26,7 @@ class Evaluator:
         self.nb_episodes = nb_episodes
         self.seed = seed
         self.model = model
-        self.env = gym.make('highway-fast-v0', config=env_config, render_mode=render_mode)
-        # self.env = gym.make('highway-fast-v0')
+        self.env = env if env is not None else gym.make('highway-fast-v0', config=None, render_mode=render_mode)
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.continuous = continuous
@@ -35,6 +34,9 @@ class Evaluator:
             self.action_labels = self.env.unwrapped.action_type.actions.values()
         self.render_delay = render_delay
         self.adversarial = adversarial if adversarial is not None else NeutralAdversarial(attack_bound)
+        if self.adversarial.env is None:
+            # the attacks need the evaluated environment to scale their bound per feature
+            self.adversarial.env = self.env
         self.record = EvalResult(nb_episodes=self.nb_episodes,
                                  name="Evaluation",
                                  model=self.model,

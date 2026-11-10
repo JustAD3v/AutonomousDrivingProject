@@ -262,7 +262,7 @@ def main():
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
-                            env_config=env_config,
+                            env=env,
                             continuous=args.continuous,
                             render_delay=render_delay,
                             render_mode=render_mode,

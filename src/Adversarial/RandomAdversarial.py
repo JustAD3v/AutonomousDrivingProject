@@ -2,18 +2,12 @@ import numpy as np
 from Adversarial.AbstractAdversarial import Adversarial
 
 class RandomAdversarial(Adversarial):
-    def __init__(self, policy, attack_bound=0.5):
-        super().__init__(policy, attack_bound)
-        self.mean_per_feature = None
+    def __init__(self, policy, attack_bound=0.5, env=None):
+        super().__init__(policy, attack_bound, env)
 
     def disrupt(self, state):
-        if self.mean_per_feature is None: 
-            feature_means = state.mean(axis=0)
-            self.mean_per_feature = np.tile(feature_means, (5, 1))
-        
-        perturbations = np.random.uniform(
-            low=-self.attack_bound*self.mean_per_feature, 
-            high=self.attack_bound*self.mean_per_feature, 
-            size=state.shape
-        )
+        # each column of the observation is one feature, so the bound is scaled
+        # by the range of that feature (see Adversarial.feature_scale)
+        bound = self.attack_bound * self.feature_scale()
+        perturbations = np.random.uniform(low=-bound, high=bound, size=state.shape)
         return np.add(state, perturbations)
