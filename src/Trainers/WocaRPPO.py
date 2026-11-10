@@ -125,7 +125,7 @@ class WocaRPPO:
 
        torch.nn.utils.clip_grad_norm_(
          model.parameters(),
-         max_norm=10.0
+         max_norm=self.config.max_grad_norm
        )
        model.optimizer.step()
 

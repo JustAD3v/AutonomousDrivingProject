@@ -48,7 +48,7 @@ class DQNTrainer:
         
         torch.nn.utils.clip_grad_norm_(
           self.main_net.parameters(),
-          max_norm=10.0
+          max_norm=self.config.max_grad_norm
         )
         self.main_net.optimizer.step()       
 
