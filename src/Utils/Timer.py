@@ -26,6 +26,22 @@ class Timer:
     def reset(self):
         self.counters.clear()
 
+    def from_second(self, seconds):
+        hours = 0
+        minutes = 0
+        time_str = ""
+        if seconds >= 3600:
+            hours = seconds // 3600
+            time_str += f"{hours:.0f}h "
+            seconds %= 3600
+        if seconds >= 60:
+            minutes = seconds // 60
+            time_str += f"{minutes:.0f}min "
+            seconds %= 60
+        time_str += f"{seconds:.0f}s"
+        return time_str
+    
     def report(self):
         for name, elapsed in self.counters.items():
-            print(f"{name}: {elapsed:.3f}s")
+            time = self.from_second(elapsed)
+            print(f"{name}: {time} ({elapsed:.3f}s)")
