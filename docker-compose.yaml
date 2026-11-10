@@ -3,3 +3,6 @@ services:
     build: .
     volumes:
       - ./models:/app/models
+      # mount the src in read only 
+      # so changes in the code don't need a rebuild
+      - ./src:/app/src:ro
