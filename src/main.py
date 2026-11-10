@@ -121,6 +121,23 @@ def main():
 
     args = parser.parse_args()
 
+    fast_env_config = {
+        "lanes_count": 4,
+        "vehicles_count": 40,
+        "duration": 40,
+        "ego_spacing": 2,
+        "vehicles_density": 1.1,
+        "collision_reward": -5,
+        "right_lane_reward": 0.0,
+        "high_speed_reward": 1.0,
+        "lane_change_reward": 0.02,
+        "reward_speed_range": [25, 40],
+        "normalize_reward": True,
+        "offroad_terminal": False,
+        "simulation_frequency": 5,
+        "policy_frequency": 1,
+    }
+
     TRAIN = args.train
     SWEEP = args.sweep
     MODEL_TYPE = args.model_type
@@ -131,14 +148,16 @@ def main():
     # PPO / Default Config setup
     train_config = (
         TrainConfigBuilder()
-        .buffer_size(800)
-        .gamma(0.95)
-        .ppo_lm(0.85)
+        .buffer_size(2048)
+        .ppo_minibatch_size(64)
         .ppo_critic_update_steps(10)
         .ppo_actor_update_steps(10)
-        .iterations(40)
+        .gamma(0.92)
+        .ppo_lm(0.8)
         .ppo_nworkers(8)
         .learning_rate(5e-4)
+        .iterations(50)
+        .log_freq(40)
         .build()
     )
 
