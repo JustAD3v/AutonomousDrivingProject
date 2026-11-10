@@ -11,8 +11,10 @@ class EnvFactory:
 
     @staticmethod
     def env_config(config):
-        if config.env_config is not None:
-            return config.env_config
+        env_config = dict(config.env_config) if config.env_config is not None else {}
         if config.ppo_continuous:
-            return {"action": {"type": "ContinuousAction"}, "offroad_terminal": True}
-        return None
+            # keep the rest of the environment settings
+            # only change the action type and offroad_terminal
+            env_config.setdefault("action", {"type": "ContinuousAction"})
+            env_config.setdefault("offroad_terminal", True)
+        return env_config or None
