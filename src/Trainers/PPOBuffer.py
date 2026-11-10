@@ -92,9 +92,13 @@ class PPOBuffer:
             torch.tensor(returns, dtype=torch.float32).to(self.device)
         )
 
-    def get_batch(self, minibatch_size=1):
+    def get_batch(self, minibatch_size=None):
         assert self.ptr == self.buffer_size
         result = self.batch_tensors()
+
+        # no minibatch size given: train on the whole buffer at once
+        if minibatch_size is None:
+            minibatch_size = self.buffer_size
 
         # split_tensors = [
         # (states_split, ...), 
