@@ -22,9 +22,6 @@ class TrainerWrapper:      #did we remove callback=None by accident?
                 #It gave errior when having parameter for this function so i removed it, maybe readd idk i could misundertand something. Dont know what happened
             #case "ppo":
                 #self.trainer.learn(total_timesteps=self.config.total_timesteps)
-            case "ppo":
-                self.trainer.learn()
-                return None
             case _:
                 return self.trainer.learn()
 

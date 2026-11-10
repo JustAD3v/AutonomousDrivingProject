@@ -119,6 +119,15 @@ def main():
         help="Launch sweep runs (experimental feature, test only)",
     )
     parser.add_argument(
+        "--container",
+        action="store_true",
+        default=False,
+        help=(
+            "Run in container mode : the training curves are saved next to the "
+            "model file instead of being shown in a window."
+        ),
+    )
+    parser.add_argument(
         "--parallel",
         action="store_true",
         default=False,
@@ -208,7 +217,10 @@ def main():
             results = trainer.learn()
             trainer.save(NETWORK_FILE)
             if results is not None:
-                results.plot()
+                if args.container:
+                    results.plot(path=f"{NETWORK_FILE}_curves.png")
+                else:
+                    results.plot()
 
     else:
         match MODEL_TYPE:
