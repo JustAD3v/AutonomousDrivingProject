@@ -161,12 +161,15 @@ def main():
         .learning_rate(5e-4)
         .iterations(15)
         .log_freq(20)
+        .env_config(fast_env_config)
         .build()
     )
 
     if args.config:
         with open(args.config) as f:
             train_config.from_json(f.read())
+
+    # print(train_config.to_json(pretty=True))
 
     # overwrite seed if in args
     if args.seed:
@@ -176,6 +179,7 @@ def main():
     if args.continuous:
         train_config.ppo_continuous = True
 
+    # centralized env_config
     env_config = EnvFactory.env_config(train_config)
     env = EnvFactory.create(train_config)
 
