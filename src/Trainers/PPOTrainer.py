@@ -11,6 +11,12 @@ from Trainers.PPOBuffer import PPOBuffer
 from Trainers.TrainResult import TrainResult
 from Utils.Timer import Timer
 
+def init_collector_worker():
+    # Workers only run single-state inference, where extra intra-op threads cost
+    # more in synchronization than they save, and all workers together would
+    # oversubscribe the CPU.
+    torch.set_num_threads(1)
+
 def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
     env = gym.make(env_name, config=env_config)
     state, _ = env.reset()
@@ -96,6 +102,10 @@ class PPOTrainer:
                                 self.config.ppo_lm)
         self.record = TrainResult(self.config.iterations, self.config.log_freq, name="PPO training", config=self.config, timer=self.timer)
 
+        # created on the first parallel collection and kept for the whole training
+        self.executor = None
+        self.nworkers = None
+
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
@@ -128,23 +138,27 @@ class PPOTrainer:
     @Timer.measure("Sample collection")
     def _collect_samples(self, parallel):
         if parallel:
-            print("using parallel !")
-            nworkers = self.rounded_nworkers()
-            buff_size = self.config.buffer_size // nworkers
-            with ProcessPoolExecutor(max_workers=nworkers) as executor:
-                futures = [executor.submit(collector_worker, 
-                                         self.env_name, 
-                                         self.env_config, 
-                                         buff_size, 
-                                         self.policy, 
-                                         self.device, 
-                                         self.critic_network, 
-                                         self.config.gamma, 
-                                         self.config.ppo_lm)
-                            for _ in range(nworkers)
-                        ]
-                res = [f.result() for f in futures]
-                self.buffer.merge(res)
+            if self.executor is None:
+                print("using parallel !")
+                self.nworkers = self.rounded_nworkers()
+                self.executor = ProcessPoolExecutor(max_workers=self.nworkers,
+                                                    initializer=init_collector_worker)
+            buff_size = self.config.buffer_size // self.nworkers
+            # the networks are serialized on every submit, so workers always
+            # collect with the current parameters
+            futures = [self.executor.submit(collector_worker,
+                                     self.env_name,
+                                     self.env_config,
+                                     buff_size,
+                                     self.policy,
+                                     self.device,
+                                     self.critic_network,
+                                     self.config.gamma,
+                                     self.config.ppo_lm)
+                        for _ in range(self.nworkers)
+                    ]
+            res = [f.result() for f in futures]
+            self.buffer.merge(res)
         else:
             state, _ = self.env.reset()
 
@@ -256,7 +270,12 @@ class PPOTrainer:
     
     def learn(self) -> TrainResult:
         self.timer.reset()
-        self._train()
+        try:
+            self._train()
+        finally:
+            if self.executor is not None:
+                self.executor.shutdown(wait=True)
+                self.executor = None
         self.record.report_final()
         self.timer.report()
         return self.record
