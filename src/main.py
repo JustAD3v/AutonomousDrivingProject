@@ -130,7 +130,7 @@ def main():
     fast_env_config = {
         "lanes_count": 4,
         "vehicles_count": 40,
-        "duration": 40,
+        "duration": 30,
         "ego_spacing": 2,
         "vehicles_density": 1.1,
         "collision_reward": -5,
@@ -155,7 +155,7 @@ def main():
     train_config = (
         TrainConfigBuilder()
         .buffer_size(2048)
-        .ppo_update_epochs(5)
+        .ppo_update_epochs(10)
         .ppo_minibatch_size(64)
         .ppo_critic_update_steps(10)
         .ppo_actor_update_steps(10)
@@ -165,7 +165,7 @@ def main():
         .ppo_lm(0.8)
         .ppo_nworkers(8)
         .learning_rate(5e-4)
-        .iterations(15)
+        .iterations(40)
         .log_freq(20)
         .env_config(fast_env_config)
         .build()
