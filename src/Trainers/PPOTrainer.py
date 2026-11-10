@@ -227,6 +227,7 @@ class PPOTrainer:
 
                 # ============ OPTIMIZE ACTOR =================
                     distribution = self.actor_network.distribution(states)
+                    entropy = distribution.entropy()
                     current_log_probs = distribution.log_prob(actions)
 
                     ratio = torch.exp(current_log_probs - old_log_probs)
@@ -241,6 +242,11 @@ class PPOTrainer:
                     clipped_objective = clipped_ratio * advantages
 
                     loss = -torch.minimum(unclipped_objective,clipped_objective).mean()
+
+                    # add entropy to favor exploration
+                    entropyloss = -torch.mean(entropy)
+                    loss += self.config.ent_coef * entropyloss
+                    
                     self.optimize_model(loss, self.actor_network)
             
             self.buffer.reset()
