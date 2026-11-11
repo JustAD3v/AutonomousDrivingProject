@@ -196,15 +196,10 @@ class WocaRPPO:
         if self.config.ppo_continuous:
             with torch.no_grad():
                 # kl_divergence only supports calculation between Normal objects
-                # but distributions wraps Normal into :
-                # - a TransformedDistribution(Normal, Tanh)
-                # - then an Independent(transformed) object which automates log prob summing
-                # Hopefully the kl_divergence is invariant under the tanh transformation fo the variable
-                # So we can compute the kl_div on the base Normal by unwrapping it
-                # We unwrap the distribution output 2 times :
-                # - one to unwrapp the Independent
-                # - the second to unwrap the tanh transformation  
-                clean_base = self.robust_actor_network.distribution(states).base_dist.base_dist
+                # but distributions wraps Normal into an Independent(Normal) object
+                # which automates log prob summing
+                # So we unwrap it once to compute the kl_div on the base Normal
+                clean_base = self.robust_actor_network.distribution(states).base_dist
 
             # rescale the uniform sample from [0, 1] to [-1, 1]
             delta = (2.0 * torch.rand_like(states) - 1.0) * attack
@@ -212,7 +207,7 @@ class WocaRPPO:
             # find perturbation delta that maximizes the distance using gradient ascent
             for _ in range(grad_steps):
                 delta.requires_grad_(True)
-                p_base = self.robust_actor_network.distribution(states + delta).base_dist.base_dist
+                p_base = self.robust_actor_network.distribution(states + delta).base_dist
                 # we have to do the sum() because we unwrapped clean_base and p_base from Independent
                 # which was responsible for doing that automatically
                 # .mean() is equivalent to reduction="batchmean" in kl_div for discrete actions
@@ -223,7 +218,7 @@ class WocaRPPO:
                 delta = delta.detach()
 
             # recompute on a fresh graph so the actor can backprop through it
-            p_base = self.robust_actor_network.distribution(states + delta).base_dist.base_dist
+            p_base = self.robust_actor_network.distribution(states + delta).base_dist
             return torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
 
         # get distribution from the actor logits
