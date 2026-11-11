@@ -159,10 +159,6 @@ class DQNTrainer:
 
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
-        print(f"[+] Environment processing duration : = {self.timer.counters['Environment processing']}s")
-        print(f"[+] Network processing duration : = {self.timer.counters['Network processing']}s")
-        print(f"[+] Prediction calculation duration : = {self.timer.counters['Prediction calculation']}s")
-
         self.timer.report()
 
         return self.record
