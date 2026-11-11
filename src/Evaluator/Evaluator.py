@@ -26,7 +26,9 @@ class Evaluator:
         self.nb_episodes = nb_episodes
         self.seed = seed
         self.model = model
-        self.env = gym.make('highway-fast-v0', config=env.spec.kwargs if env is not None else None, render_mode=render_mode)
+        env_config = env.spec.kwargs['config'] if env is not None else None
+        env_name = env.spec.id if env is not None else "highway-fast-v0"
+        self.env = gym.make(env_name, config=env_config, render_mode=render_mode)
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.continuous = continuous
