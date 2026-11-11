@@ -256,9 +256,9 @@ def main():
         if args.adversarial:
             match ATTACK_TYPE:
                 case "random":
-                    adversarial = RandomAdversarial(policy, attack_bound)
+                    adversarial = RandomAdversarial(policy, attack_bound, env)
                 case "fgsm":
-                    adversarial = FGSMAdversarial(policy, attack_bound)
+                    adversarial = FGSMAdversarial(policy, attack_bound, env)
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
