@@ -159,6 +159,48 @@ python src/main.py --train --model_type ppo --parallel
 Each worker builds its own environment from the same config, so collection
 stays identical to the sequential path.
 
+### Train in a container
+
+Training can run inside a Docker container, which avoids installing the
+dependencies locally. The image is CPU-only (see `Dockerfile` and
+`container-requirements.txt`), so it is meant for training, not for rendering
+or evaluating with a window.
+
+`docker-compose.yaml` defines a single `train` service with two mounts:
+
+- `./models` is mounted read-write, so checkpoints and training curves written
+  by the container stay on the host;
+- `./src` is mounted read-only, so changing the code does not need an image
+  rebuild.
+
+Build the image once:
+
+```powershell
+docker compose build
+```
+
+Then use the shortcut script for your shell, which forwards every argument to
+`src/main.py` and adds `--container`:
+
+```powershell
+./train.ps1 --train --model_type ppo --parallel
+```
+
+```bash
+./train.sh --train --model_type ppo --parallel
+```
+
+Both are equivalent to:
+
+```powershell
+docker compose run --rm train python src/main.py --container --train --model_type ppo --parallel
+```
+
+`--container` only changes how the results are reported: the training curves
+are saved next to the checkpoint as `<net_file>_curves.png` instead of being
+shown in a window, since a container has no display. Write the checkpoint
+under `models/` (the default) so that both it and the curves land on the host.
+
 ### Parameter sweeps
 
 A sweep trains the same model several times, once per combination of the
@@ -262,6 +304,7 @@ overwhelming the small ones.
 | `--continuous`                         | Use the continuous action space (PPO only), for training and evaluation. |
 | `--sweep`                              | Run the parameter sweep defined in `main.py` instead of a single training run (experimental). |
 | `--parallel`                           | Collect PPO samples in parallel worker processes (training only). |
+| `--container`                          | Container mode (training only): save the training curves next to the checkpoint instead of showing them in a window. |
 | `--render_human`                       | Render the environment during evaluation.                      |
 | `--render_delay SECONDS`               | Delay between evaluation steps.                                |
 | `--adversarial`                        | Enable adversarial perturbations during evaluation.            |
