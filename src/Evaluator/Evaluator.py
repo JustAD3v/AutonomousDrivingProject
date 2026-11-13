@@ -21,13 +21,13 @@ class Evaluator:
                  attack_bound=0.5,
                  seed=None,
                  continuous=False,
-                 model=None):
+                 model=None,
+                 env_name="highway-fast-v0"):
         self.policy = policy
         self.nb_episodes = nb_episodes
         self.seed = seed
         self.model = model
-        self.env = gym.make('highway-fast-v0', config=env_config, render_mode=render_mode)
-        # self.env = gym.make('highway-fast-v0')
+        self.env = gym.make(env_name, config=env_config, render_mode=render_mode)
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.continuous = continuous

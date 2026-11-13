@@ -40,6 +40,12 @@ def main():
         help="Train the selected model instead of evaluating it",
     )
     parser.add_argument(
+        "--env",
+        type=str,
+        metavar="ENV_ID",
+        help="Environment to train or evaluate in (default: highway-fast-v0).",
+    )
+    parser.add_argument(
         "--model_type",
         type=str,
         choices=["dqn", "sb3_dqn", "wocar_dqn", "ppo", "wocar_ppo", "sb3-ppo"],
@@ -146,6 +152,9 @@ def main():
         with open(args.config) as f:
             train_config.from_json(f.read())
 
+    if args.env:
+        train_config.env_name = args.env
+
     # overwrite seed if in args
     if args.seed:
         train_config.seed = args.seed
@@ -214,6 +223,7 @@ def main():
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
+                            env_name=train_config.env_name,
                             env_config=env_config,
                             continuous=args.continuous,
                             render_delay=render_delay,

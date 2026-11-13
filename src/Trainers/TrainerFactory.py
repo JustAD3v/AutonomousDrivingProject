@@ -149,6 +149,7 @@ class TrainerFactory:
 
                 trainer = PPOTrainer(
                     config=config,
+                    env_name=config.env_name,
                     actor_network=actor_network,
                     critic_network=critic_network,
                     policy=policy,
@@ -168,6 +169,7 @@ class TrainerFactory:
 
                 trainer = WocaRPPO(
                     config=config,
+                    env_name=config.env_name,
                     actor_network=actor_network,
                     critic_network=critic_network,
                     woca_network=woca_network,
