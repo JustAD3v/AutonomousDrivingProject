@@ -84,11 +84,11 @@ class HighwayGUI(QMainWindow):
         conf_layout.addWidget(self.tabs)
 
         btn_row = QHBoxLayout()
-        self.run_btn = QPushButton("▶ Run Process")
+        self.run_btn = QPushButton("Run Process")
         self.run_btn.setMinimumHeight(38)
         self.run_btn.clicked.connect(self.execute_gui_command)
 
-        self.stop_btn = QPushButton("■ Stop")
+        self.stop_btn = QPushButton("Stop")
         self.stop_btn.setMinimumHeight(38)
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_command)
@@ -102,7 +102,7 @@ class HighwayGUI(QMainWindow):
         terminal_layout = QVBoxLayout(terminal_group)
 
         top_term_bar = QHBoxLayout()
-        self.cwd_label = QLabel(f"Dir: {self.current_dir}")
+        self.cwd_label = QLabel(f"{self.current_dir}")
         self.cwd_label.setStyleSheet("color: #666666; font-size: 11px;")
         clear_btn = QPushButton("Clear Terminal")
         clear_btn.clicked.connect(lambda: self.terminal_output.clear())
@@ -115,7 +115,7 @@ class HighwayGUI(QMainWindow):
         self.terminal_output.setReadOnly(True)
         self.terminal_output.setFont(QFont("Consolas", 10))
         self.terminal_output.setStyleSheet("background-color: #121212; color: #00ff66;")
-        self.terminal_output.append("Terminal ready. Logs and output from your training/evaluation will stream here.")
+        self.terminal_output.append("Terminal ready.")
         terminal_layout.addWidget(self.terminal_output)
 
         h_splitter.addWidget(conf_group)
@@ -150,7 +150,7 @@ class HighwayGUI(QMainWindow):
         config_layout.addWidget(config_btn)
 
         self.seed_input = QLineEdit()
-        self.seed_input.setPlaceholderText("e.g. 123")
+        self.seed_input.setPlaceholderText("123")
 
         form.addRow(self.train_chk)
         form.addRow("Model Type:", self.model_combo)
