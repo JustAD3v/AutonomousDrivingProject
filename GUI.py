@@ -97,7 +97,7 @@ class HighwayGUI(QMainWindow):
         btn_row.addWidget(self.stop_btn)
         conf_layout.addLayout(btn_row)
 
-        # ================= RIGHT PANE (OUTPUT TERMINAL) =================
+        # ================= RIGHT PANE ( TERMINAL) =================
         terminal_group = QGroupBox("Terminal")
         terminal_layout = QVBoxLayout(terminal_group)
 
@@ -204,7 +204,7 @@ class HighwayGUI(QMainWindow):
         self.json_iterations_spin.setSingleStep(50)
 
         self.json_lr_spin = QDoubleSpinBox()
-        self.json_lr_spin.setDecimals(6)
+        self.json_lr_spin.setDecimals(6) 
         self.json_lr_spin.setRange(0.000001, 1.0)
         self.json_lr_spin.setValue(0.0005)
         self.json_lr_spin.setSingleStep(0.0001)
