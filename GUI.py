@@ -1,4 +1,5 @@
 import os
+import threading
 import sys
 import json
 import subprocess
@@ -27,6 +28,7 @@ class SubprocessWorker(QThread):
         self.log_signal.emit(f"Executing: {display_cmd}\n")
         
         env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         venv_bin = os.path.dirname(sys.executable)
         env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
 
@@ -49,10 +51,16 @@ class SubprocessWorker(QThread):
             self.log_signal.emit(f"Error: {str(e)}")
             self.finished_signal.emit(-1)
 
+# I added a timer with threading which is also now an import, so we ca forceclose the window on stop. Otherwise it wouldnt work. There might lowk be a smarter way of doing it 
+# but this is what I could come up with
     def stop(self):
         if self.process and self.process.poll() is None:
             self.process.terminate()
+            threading.Timer(1.5, self._force_kill).start()
 
+    def _force_kill(self):
+        if self.process and self.process.poll() is None:
+            self.process.kill()
 
 # ====== 2. Main Studio Window =====
 class HighwayGUI(QMainWindow):
@@ -300,6 +308,7 @@ class HighwayGUI(QMainWindow):
 
     def stop_command(self):
         if self.worker:
+            self.stop_btn.setEnabled(False)
             self.append_terminal("\n[GUI] Terminating process...")
             self.worker.stop()
 
