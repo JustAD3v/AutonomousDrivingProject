@@ -124,4 +124,5 @@ class Results:
             plt.close(figure)
             print(f"[+] Curves saved to file : {path}")
         else:
-            plt.show()
+            pass
+           # plt.show()
