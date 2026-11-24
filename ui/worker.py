@@ -1,4 +1,3 @@
-"""Background worker that runs a CLI command without freezing the UI."""
 import os
 import sys
 import subprocess
@@ -49,11 +48,7 @@ class SubprocessWorker(QThread):
             self.finished_signal.emit(-1)
 
     def stop(self):
-        """Ask the process to exit; hard-kill it if it ignores that shit.
-
-        terminate() sends SIGTERM, which a busy pygame/SDL could prob only
-        react to much later. The timer escalates to kill() without blocking
-        """
+        
         if self.process and self.process.poll() is None:
             self.process.terminate()
             timer = threading.Timer(KILL_GRACE_SECONDS, self._force_kill)

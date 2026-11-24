@@ -1,4 +1,3 @@
-"""Right-hand pane: read-only terminal that shows the subprocess output."""
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit

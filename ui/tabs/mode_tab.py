@@ -1,4 +1,3 @@
-"""'Operation & Model' tab: train/eval switch, model type, checkpoint, config, seed."""
 from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QHBoxLayout, QCheckBox, QComboBox,
     QLineEdit, QPushButton, QFileDialog

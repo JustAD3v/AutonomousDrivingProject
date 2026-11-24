@@ -1,7 +1,3 @@
-"""Turns the GUI settings into the argv list for src/main.py.
-
-Kept free of any Qt code so it is easy to read, change and test on its own.
-"""
 import sys
 
 MAIN_SCRIPT = "src/main.py"

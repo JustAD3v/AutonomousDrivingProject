@@ -1,4 +1,3 @@
-"""'Config JSON' tab: build and save a training config file."""
 import os
 import json
 

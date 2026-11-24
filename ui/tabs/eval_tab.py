@@ -1,4 +1,3 @@
-"""'Evaluation & Rendering' tab: render window, delay, adversarial attack."""
 from PyQt6.QtWidgets import QWidget, QFormLayout, QCheckBox, QDoubleSpinBox
 
 
