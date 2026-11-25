@@ -193,6 +193,8 @@ def main():
     if args.env:
         train_config.env_name = args.env
 
+    # print(train_config.to_json(pretty=True))
+
     # overwrite seed if in args
     if args.seed:
         train_config.seed = args.seed
