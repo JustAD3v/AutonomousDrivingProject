@@ -16,10 +16,20 @@ class EnvFactory:
     def wrap(env):
         match env.spec.id:
             case "merge-v1":
+                success_condition = lambda *_: (
+                    env.unwrapped.vehicle.position[0] > 370
+                    and not env.unwrapped.vehicle.crashed
+                )
+            case "exit-v0":
                 success_condition = lambda obs, reward, term, trunc, info: (
-                env.unwrapped.vehicle.position[0] > 370
-                and not env.unwrapped.vehicle.crashed
-            )
+                    info.get("is_success", False)
+                    and not env.unwrapped.vehicle.crashed
+                )
+            case "intersection-v0":
+                success_condition = lambda *_: (
+                    env.unwrapped.has_arrived(env.unwrapped.vehicle)
+                    and not env.unwrapped.vehicle.crashed
+                )
             case _:
                 success_condition = EnvWrapper.default_success
         return EnvWrapper(env, success_condition)
