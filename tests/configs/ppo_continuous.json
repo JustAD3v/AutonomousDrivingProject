@@ -15,12 +15,12 @@
             40
         ],
         "normalize_reward": true,
-        "simulation_frequency": 5,
-        "policy_frequency": 1
+        "simulation_frequency": 15,
+        "policy_frequency": 5
     },
     "seed": 123123,
     "parallel": true,
-    "gamma": 0.95,
+    "gamma": 0.99,
     "epsilon_start": 1.0,
     "epsilon": 1.0,
     "exploration_frac": 0.1,
@@ -31,10 +31,10 @@
     "batch_size": 32,
     "copy_freq": 800,
     "train_freq": 1,
-    "iterations": 50,
+    "iterations": 120,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
-    "ent_coef": 0.02,
+    "ent_coef": 0.0,
     "policy_kwargs": {
         "net_arch": [
             256,

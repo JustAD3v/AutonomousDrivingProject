@@ -100,6 +100,15 @@ class PPOBuffer:
         if minibatch_size is None:
             minibatch_size = self.buffer_size
 
+        # the buffer is filled in time order (and per worker when merged), so a plain
+        # split would build minibatches of consecutive, strongly correlated transitions.
+        # shuffle the rows first, like the uniform draw done in ReplayBuffer.get_batch,
+        # but without replacement so every transition is used exactly once per pass.
+        indices = torch.from_numpy(
+            np.random.permutation(self.buffer_size)
+        ).to(self.device)
+        result = [tensor[indices] for tensor in result]
+
         # split_tensors = [
         # (states_split, ...), 
         # (actions_split, ...), 

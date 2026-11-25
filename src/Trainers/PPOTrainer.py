@@ -236,8 +236,9 @@ class PPOTrainer:
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
             
             # ============ GET BATCH =====================
-            minibatches = self.buffer.get_batch(self.config.ppo_minibatch_size)
             for _ in range(self.config.ppo_update_epochs):
+                # reshuffled on every epoch so the same partition is not reused
+                minibatches = self.buffer.get_batch(self.config.ppo_minibatch_size)
                 for minibatch in minibatches:
                     states, actions, old_log_probs, advantages, returns = minibatch
                     states = states.float()

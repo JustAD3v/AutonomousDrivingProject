@@ -74,8 +74,8 @@ SCENARIOS = {
     "ppo_continuous": {
         "model_type": "ppo",
         "config": "ppo_continuous.json",
-        "evals": [CLEAN, FGSM_50],
-        "references": {"clean": 0.77, "fgsm_50": 0.19},
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": 0.96, "fgsm_10": 0.0, "random_80": None},
     },
     "wocar_ppo": {
         "model_type": "wocar_ppo",
