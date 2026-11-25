@@ -1,6 +1,7 @@
 from Adversarial.AbstractAdversarial import Adversarial
 from Adversarial.NeutralAdversarial import NeutralAdversarial
 from Evaluator.EvalResult import EvalResult
+from Utils.EnvFactory import EnvFactory
 
 import torch
 import gymnasium as gym
@@ -29,7 +30,7 @@ class Evaluator:
         self.model = model
         env_config = env.spec.kwargs['config'] if env is not None else None
         env_name = env.spec.id if env is not None else "highway-fast-v0"
-        self.env = gym.make(env_name, config=env_config, render_mode=render_mode)
+        self.env = EnvFactory.wrap(gym.make(env_name, config=env_config, render_mode=render_mode))
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.continuous = continuous
@@ -58,6 +59,7 @@ class Evaluator:
             episode_choices = np.zeros(action_shape) if self.continuous else [0 for i in range(action_shape)]
             episode_steps = 0
             episode_return = 0.0
+            success = False
             state, _ = self.env.reset()
             term = trunc = False
             while not (term | trunc):
@@ -73,12 +75,13 @@ class Evaluator:
                     episode_choices[action] += 1
                 steps += 1
                 episode_steps += 1
-                new_state, reward, term, trunc, _ = self.env.step(action)
+                new_state, reward, term, trunc, info = self.env.step(action)
                 episode_return += reward
+                success = info["success"]
                 state = new_state
                 time.sleep(self.render_delay)
             choices_dict = self.choices_summary(episode_choices, episode_steps)
-            self.record.add_episode(episode_steps, episode_return, success=trunc, details=str(choices_dict))
+            self.record.add_episode(episode_steps, episode_return, success=success, details=str(choices_dict))
         self.record.add_choices(self.choices_summary(choices, steps))
         self.record.report_final()
         self.env.close()

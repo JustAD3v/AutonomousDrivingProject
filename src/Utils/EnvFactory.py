@@ -2,12 +2,27 @@ import gymnasium as gym
 import highway_env
 
 from Environments.CustomHighwayEnv import CustomHighwayEnv
+from Environments.EnvWrapper import EnvWrapper
+from types import MethodType
 
 class EnvFactory:
     @staticmethod
     def create(config, render_mode=None):
+        env = gym.make(config.env_name, config=EnvFactory.env_config(config), render_mode=render_mode)
         # env_name = "custom-highway-v0" if config.custom_env else config.env_name
-        return gym.make(config.env_name, config=EnvFactory.env_config(config), render_mode=render_mode)
+        return EnvFactory.wrap(env)
+
+    @staticmethod
+    def wrap(env):
+        match env.spec.id:
+            case "merge-v1":
+                success_condition = lambda obs, reward, term, trunc, info: (
+                env.unwrapped.vehicle.position[0] > 370
+                and not env.unwrapped.vehicle.crashed
+            )
+            case _:
+                success_condition = EnvWrapper.default_success
+        return EnvWrapper(env, success_condition)
 
     @staticmethod
     def env_config(config):
