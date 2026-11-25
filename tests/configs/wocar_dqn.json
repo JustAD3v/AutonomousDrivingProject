@@ -1,5 +1,5 @@
 {
-    "env_name": "custom-highway-v0",
+    "env_name": "highway-fast-v0",
     "env_config": {
         "lanes_count": 4,
         "vehicles_count": 40,
@@ -11,14 +11,13 @@
         "high_speed_reward": 1.0,
         "lane_change_reward": 0.02,
         "reward_speed_range": [
-            20,
+            25,
             40
         ],
-        "normalize_reward": false,
+        "normalize_reward": true,
         "simulation_frequency": 5,
         "policy_frequency": 1
     },
-    "seed": 123123,
     "gamma": 0.95,
     "epsilon_start": 1.0,
     "epsilon": 1.0,
@@ -27,10 +26,10 @@
     "epsilon_min": 0.01,
     "buffer_size": 15000,
     "warmup_size": 400,
-    "batch_size": 32,
+    "batch_size": 64,
     "copy_freq": 50,
     "train_freq": 1,
-    "iterations": 200,
+    "iterations": 5e3,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
     "policy_kwargs": {
@@ -39,10 +38,5 @@
             256
         ]
     },
-    "k_wst": 0.5,
-    "k_reg": 0.2,
-    "attack_budget": 0.05,
-    "wocar_grad_step_size": 0.0005,
-    "wocar_grad_steps": 100,
     "log_freq": 20
 }
