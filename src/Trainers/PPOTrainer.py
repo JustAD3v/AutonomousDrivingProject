@@ -209,7 +209,7 @@ class PPOTrainer:
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
             
             # ============ GET BATCH =====================
-            minibatches = self.buffer.get_batch()
+            minibatches = self.buffer.get_batch(self.config.ppo_minibatch_size)
             for _ in range(self.config.ppo_update_epochs):
                 for minibatch in minibatches:
                     states, actions, old_log_probs, advantages, returns = minibatch

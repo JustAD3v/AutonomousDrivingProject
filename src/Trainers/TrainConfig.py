@@ -34,7 +34,7 @@ class TrainConfig:
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
         self.ppo_nworkers = 8
-        self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
+        self.ppo_minibatch_size = None # default takes the whole buffer
         self.ppo_continuous = False
         self.log_freq = 10
         self.parallel = False
