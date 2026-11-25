@@ -231,14 +231,18 @@ def main():
     else:
         match MODEL_TYPE:
             case "dqn" | "wocar_dqn":
-                model = StateOnlyNN()
+                model = TrainerFactory.create_network_factory(
+                    env, train_config, MODEL_TYPE
+                ).create()
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = CustomPolicy(network=model, action_space=env.action_space)
             case "ppo" | "wocar_ppo":
                 if train_config.ppo_continuous:
                     model = ActorNetwork(out_features=env.action_space.shape[0], continuous=True)
                 else:
-                    model = ActorNetwork()
+                    model = TrainerFactory.create_network_factory(
+                        env, train_config, MODEL_TYPE
+                    ).create("actor")
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = PPOPolicy(network=model, action_space=env.action_space)
             case "sb3_dqn":

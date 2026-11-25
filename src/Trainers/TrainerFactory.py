@@ -28,14 +28,33 @@ class TrainerFactory:
             configs = {
                 "actor": {"learning_rate": config.learning_rate},
                 "critic": {"learning_rate": config.learning_rate},
-                "woca": {"learning_rate": config.learning_rate}
+                "woca": {"learning_rate": config.learning_rate},
             }
             if config.ppo_continuous:
-                action_size = env.action_space.shape[0]
-                configs["actor"].update({"out_features": action_size, "continuous": True})
-                # the worst-case Q network takes the state and the action as input
-                configs["woca"].update({"in_features": int(np.prod(env.observation_space.shape)) + action_size})
+                configs["actor"]["out_features"] = env.action_space.shape[0]
+                configs["actor"]["continuous"] = True
+            else:
+                # Match the observation size and discrete action count
+                observation_size = int(np.prod(env.observation_space.shape))
+                action_count = env.action_space.n
+                configs["actor"]["in_features"] = observation_size
+                configs["actor"]["out_features"] = action_count
+                configs["critic"]["in_features"] = observation_size
+                configs["critic"]["out_features"] = 1
+                configs["woca"]["in_features"] = observation_size
+                configs["woca"]["out_features"] = action_count
             return NetworkFactory(train_config=config, network_types=network_types, configs=configs)
+
+        if trainer_type in ("dqn", "wocar_dqn"):
+            return NetworkFactory(
+                train_config=config,
+                network_types=StateOnlyNN,
+                configs={"default": {
+                    "learning_rate": config.learning_rate,
+                    "in_features": int(np.prod(env.observation_space.shape)),
+                    "out_features": env.action_space.n,
+                }},
+            )
 
         return NetworkFactory(train_config=config, network_types=StateOnlyNN)
 
