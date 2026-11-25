@@ -37,6 +37,7 @@
     "ppo_actor_update_steps": 10,
     "ppo_critic_update_steps": 10,
     "ppo_update_epochs": 10,
+    "woca_update_epochs": 4,
     "ppo_clip_epsilon": 0.2,
     "ppo_lm": 0.8,
     "ppo_nworkers": 8,
@@ -47,6 +48,8 @@
     "k_wst_frac": 0.8,
     "k_reg": 0.02,
     "attack_budget": 0.1,
+    "attack_budget_start": 0.0,
+    "attack_budget_frac": 0.8,
     "wocar_grad_step_size":5e-4,
     "wocar_grad_steps": 10,
     "log_freq": 10

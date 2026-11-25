@@ -67,7 +67,8 @@ class WocaRDQN:
         self.k_wst = config.k_wst_start
         self.k_wst_step = (config.k_wst - config.k_wst_start)/(config.k_wst_frac*config.iterations)
         self.k_reg = config.k_reg
-        self.attack_budget = config.attack_budget
+        self.attack_budget = config.attack_budget_start
+        self.attack_budget_step = (config.attack_budget - config.attack_budget_start)/(config.attack_budget_frac*config.iterations)
         self.grad_steps = config.wocar_grad_steps
         # perturbation set of the training: the same one the evaluation attacks use,
         # a fraction of the half-range of each feature (see Adversarial.feature_scale_of)
@@ -89,6 +90,9 @@ class WocaRDQN:
       # so it starts at k_wst_start = 1 (no worst-case) and DECREASES down to its
       # target to give the worst-case qvalues more and more weight
       return max(self.config.k_wst, k_wst + self.k_wst_step)
+
+    def attack_budget_update(self, attack_budget):
+      return min(self.config.attack_budget, attack_budget + self.attack_budget_step)
 
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
@@ -591,7 +595,8 @@ class WocaRDQN:
             iteration += 1
             state = new_state
             self.config.epsilon = self.epsilon_update(self.config.epsilon)
-            self.k_wst = self.k_wst_update(self.k_wst)        
+            self.k_wst = self.k_wst_update(self.k_wst)
+            self.attack_budget = self.attack_budget_update(self.attack_budget)
           
           self.record.add_episode(nb_steps,
                                   episode_return,

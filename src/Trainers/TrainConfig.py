@@ -28,6 +28,8 @@ class TrainConfig:
         self.k_wst_frac = 0.8
         self.k_reg = 0.2
         self.attack_budget = 0.05
+        self.attack_budget_start = 0.0
+        self.attack_budget_frac = 0.8
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
         self.wocar_hinge_c = 1.0
@@ -36,6 +38,7 @@ class TrainConfig:
         self.ppo_actor_update_steps = 4
         self.ppo_critic_update_steps = 4
         self.ppo_update_epochs = 4
+        self.woca_update_epochs = 4  # passes of the worst-case network over a batch
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
         self.ppo_nworkers = 8
@@ -238,7 +241,15 @@ class TrainConfigBuilder:
     def attack_budget(self, value):
         self._config.attack_budget = value
         return self
-    
+
+    def attack_budget_start(self, value):
+        self._config.attack_budget_start = value
+        return self
+
+    def attack_budget_frac(self, value):
+        self._config.attack_budget_frac = value
+        return self
+
     def wocar_grad_step_size(self, value):
         self._config.wocar_grad_step_size = value
         return self
@@ -267,6 +278,10 @@ class TrainConfigBuilder:
         self._config.ppo_critic_update_steps = value
         return self
     
+    def woca_update_epochs(self, value):
+        self._config.woca_update_epochs = value
+        return self
+
     def ppo_update_epochs(self, value):
         self._config.ppo_update_epochs = value
         return self

@@ -149,7 +149,8 @@ class WocaRPPO:
         self.k_wst = config.k_wst_start
         self.k_wst_step = (config.k_wst - config.k_wst_start)/(config.k_wst_frac*config.iterations)
         self.k_reg = config.k_reg
-        self.attack_budget = config.attack_budget
+        self.attack_budget = config.attack_budget_start
+        self.attack_budget_step = (config.attack_budget - config.attack_budget_start)/(config.attack_budget_frac*config.iterations)
         self.grad_step_size = config.wocar_grad_step_size
         self.grad_steps = config.wocar_grad_steps
         # perturbation set of the training: the same one the evaluation attacks use,
@@ -171,6 +172,9 @@ class WocaRPPO:
         # so it grows from k_wst_start
         # up to its target
         return min(self.config.k_wst, k_wst + self.k_wst_step)
+
+    def attack_budget_update(self, attack_budget):
+        return min(self.config.attack_budget, attack_budget + self.attack_budget_step)
 
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
@@ -740,6 +744,19 @@ class WocaRPPO:
                 else:
                     state = next_state
 
+    def _cast_minibatch(self, minibatch):
+        states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = minibatch
+        return (
+            states.float(),
+            actions.float() if self.config.ppo_continuous else actions.long(),
+            old_log_probs.float().detach(),
+            advantages.float(),
+            returns.float(),
+            rewards.float(),
+            next_states.float(),
+            dones.float()
+        )
+
     @Timer.measure("Training duration")
     def _train(self):
         print("[+] === Training starts ===")
@@ -752,23 +769,26 @@ class WocaRPPO:
 
             # ============ GET BATCH =====================
             minibatches = self.buffer.get_batch(self.config.ppo_minibatch_size)
+
+            # ============ TRAIN WOCA NETWORK ============
+            # the worst-case network is a Q network trained by regression, it does not
+            # depend on the PPO ratio, so it gets its own passes over the batch before
+            # the policy update : Q_wst then stays fixed while the actor epochs run
+            for _ in range(self.config.woca_update_epochs):
+                for minibatch in minibatches:
+                    states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
+                    self._train_woca_network(states, actions, rewards, next_states, dones)
+
+            # one copy per buffer run
+            self.woca_target_network.load_state_dict(self.woca_network.state_dict())
+            print("[!!] Weights of Woca Target Network updated !")
+
             for _ in range(self.config.ppo_update_epochs):
                 for minibatch in minibatches:
-                    states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = minibatch
-                    states = states.float()
-                    next_states = next_states.float()
-                    actions = actions.float() if self.config.ppo_continuous else actions.long()
-                    old_log_probs = old_log_probs.float().detach()
-                    advantages = advantages.float()
-                    returns = returns.float()
-                    rewards = rewards.float()
-                    dones = dones.float()
+                    states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
 
                 # ============ OPTIMIZE CRITIC ===============
                     self._train_critic_network(states, returns)
-
-                # ============ TRAIN WOCA NETWORK ============
-                    self._train_woca_network(states, actions, rewards, next_states, dones)
 
                 # ============ CALCULATE REGULARIZATION ============
                     reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
@@ -776,13 +796,10 @@ class WocaRPPO:
                 # ============ OPTIMIZE ROBUST ACTOR =================
                     self._train_robust_actor_network(states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss)
 
-            # one copy per buffer run
-            self.woca_target_network.load_state_dict(self.woca_network.state_dict())
-            print("[!!] Weights of Woca Target Network updated !")
-
             self.buffer.reset()
             iteration += 1
             self.k_wst = self.k_wst_update(self.k_wst)
+            self.attack_budget = self.attack_budget_update(self.attack_budget)
             self.record.report_iteration(iteration)
 
     def learn(self) -> TrainResult:
