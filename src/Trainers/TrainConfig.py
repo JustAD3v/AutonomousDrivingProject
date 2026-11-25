@@ -19,7 +19,8 @@ class TrainConfig:
         self.train_freq = 1
         self.iterations = 500
         self.learning_rate = 5e-4
-        self.max_grad_norm = 10.0
+        self.max_grad_norm = 0.5
+        self.ent_coef = 0.02
         self.policy_kwargs = dict(net_arch=[256, 256])
         self.seed = random.getrandbits(32)
         self.k_wst = 0.5
