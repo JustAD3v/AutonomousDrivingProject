@@ -63,7 +63,7 @@ SCENARIOS = {
         "model_type": "wocar_dqn",
         "config": "wocar_dqn.json",
         "evals": [CLEAN, FGSM_10, RANDOM_80],
-        "references": {"clean": 0.92, "random_80": 0.71, "fgsm_10": 0.86},
+        "references": {"clean": 0.96, "random_80": 0.70, "fgsm_10": 0.86},
     },
     "ppo": {
         "model_type": "ppo",
@@ -81,7 +81,7 @@ SCENARIOS = {
         "model_type": "wocar_ppo",
         "config": "wocar_ppo.json",
         "evals": [CLEAN, FGSM_10, RANDOM_80],
-        "references": {"clean": 0.97, "fgsm_10": None, "random_80": None},
+        "references": {"clean": 0.98, "fgsm_10": 85, "random_80": 90},
     },
 }
 

@@ -27,7 +27,7 @@ class Adversarial(ABC):
         # the environment normalizes every feature of features_range to [-1, 1],
         # so their half-range is 1. The others keep their own values: "presence"
         # is a flag in [0, 1], so its half-range is 0.5
-        return np.array([1.0 if feature in observation.features_range else 0.5
+        return np.array([1.0 if feature in observation.features_range else 0.0
                          for feature in observation.features], dtype=np.float32)
 
     def feature_scale(self):
