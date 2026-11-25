@@ -568,10 +568,11 @@ class WocaRPPO:
 
     # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
     # one line per tag, printed every log_freq calls of that tag
-    def _debug_log(self, tag, **values):
+    # (every=1 for a tag already called once per iteration)
+    def _debug_log(self, tag, every=None, **values):
         calls = self._debug_calls.get(tag, 0) + 1
         self._debug_calls[tag] = calls
-        if calls % self.config.log_freq:
+        if calls % (self.config.log_freq if every is None else every):
             return
         fields = " ".join(f"{name}={value:+.4f}" for name, value in values.items())
         print(f"[DEBUG-{tag}] call={calls} {fields}")
@@ -865,6 +866,20 @@ class WocaRPPO:
 
                 # ============ OPTIMIZE ROBUST ACTOR =================
                     self._train_robust_actor_network(states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss, woca_advantage)
+
+            # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+            # log_std is shared by every state and divides the KL regularization, so the
+            # actor can shrink that term by widening the policy instead of stabilizing
+            # its mean. Climbing towards the clamp (1.0, std 2.7 on a Box(-1,1)) means
+            # the policy degenerates into clipped noise
+            if DEBUG and self.config.ppo_continuous:
+                log_std = self.robust_actor_network.log_std.detach()
+                self._debug_log("POLICY",
+                                every=1,
+                                log_std_mean=log_std.mean().item(),
+                                log_std_max=log_std.max().item(),
+                                std_mean=log_std.clamp(-5.0, 1.0).exp().mean().item())
+            # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
             self.buffer.reset()
             iteration += 1
