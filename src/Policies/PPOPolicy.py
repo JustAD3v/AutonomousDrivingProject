@@ -7,12 +7,16 @@ class PPOPolicy:
         self.network = network
         self.action_space = action_space
 
-    def predict(self, state, device="cpu", deterministic=True):
+    def predict(self, state, device="cpu", deterministic=False):
         with torch.no_grad():
             state_flat = np.asarray(state, dtype=np.float32).flatten()
             state_tensor = torch.tensor(state_flat, dtype=torch.float32).to(device)
             distribution = self.network.distribution(state_tensor)
-            action = distribution.sample()
+            if deterministic:
+                # greedy action : the gaussian mean
+                action = distribution.mean if self.network.continuous else distribution.probs.argmax(-1)
+            else:
+                action = distribution.sample()
         if self.network.continuous:
             log_prob = distribution.log_prob(action)
             # raw sampled action, consistent with log_prob (use to_env_action before env.step)

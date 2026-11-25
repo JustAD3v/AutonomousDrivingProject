@@ -48,7 +48,7 @@ class TrainerWrapper:      #did we remove callback=None by accident?
             case "sb3_dqn" | "sb3-ppo":
                 return self.trainer.predict(state, deterministic=deterministic)
             case "ppo" | "wocar_ppo":
-                action, _ = self.trainer.policy.predict(state)
+                action, _ = self.trainer.policy.predict(state, deterministic=deterministic)
                 return self.trainer.policy.to_env_action(action)
             case _:
                 return self.trainer.policy.predict(state, epsilon=0.0)

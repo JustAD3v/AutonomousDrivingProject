@@ -25,8 +25,11 @@ class TrainerFactory:
                 "woca": WocaPPONN if config.ppo_continuous else StateOnlyNN
             }
             configs = {
-                "actor": {"out_features": env.action_space.shape[0], "continuous": True}
-            } if config.ppo_continuous else None
+                "actor": {"learning_rate": config.learning_rate},
+                "critic": {"learning_rate": config.learning_rate}
+            }
+            if config.ppo_continuous:
+                configs["actor"].update({"out_features": env.action_space.shape[0], "continuous": True})
             return NetworkFactory(train_config=config, network_types=network_types, configs=configs)
 
         return NetworkFactory(train_config=config, network_types=StateOnlyNN)
