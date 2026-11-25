@@ -24,6 +24,8 @@ class TrainConfig:
         self.policy_kwargs = dict(net_arch=[256, 256])
         self.seed = random.getrandbits(32)
         self.k_wst = 0.5
+        self.k_wst_start = 0.0
+        self.k_wst_frac = 0.8
         self.k_reg = 0.2
         self.attack_budget = 0.05
         self.wocar_grad_step_size = 5e-4
@@ -220,7 +222,15 @@ class TrainConfigBuilder:
     def k_wst(self, value):
         self._config.k_wst = value
         return self
-    
+
+    def k_wst_start(self, value):
+        self._config.k_wst_start = value
+        return self
+
+    def k_wst_frac(self, value):
+        self._config.k_wst_frac = value
+        return self
+
     def k_reg(self, value):
         self._config.k_reg = value
         return self

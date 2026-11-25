@@ -24,8 +24,9 @@ class WocaRDQN:
                  config: TrainConfig, 
                  target_network: nn.Module,
                  main_network: nn.Module, 
-                 woca_network: nn.Module, 
-                 robust_network: nn.Module, 
+                 woca_network: nn.Module,
+                 woca_target_network: nn.Module,
+                 robust_network: nn.Module,
                  policy, 
                  env_name = "highway-fast-v0",  
                  env_config = None,
@@ -43,8 +44,10 @@ class WocaRDQN:
         self.main_net = main_network
         self.target_net = target_network
         self.woca_net = woca_network
+        self.woca_target_net = woca_target_network
         self.robust_net = robust_network
         self.target_net.load_state_dict(self.main_net.state_dict())
+        self.woca_target_net.load_state_dict(self.woca_net.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
         self.r_buffer = ReplayBuffer(self.config.buffer_size, 
                                      config.batch_size,
@@ -60,7 +63,9 @@ class WocaRDQN:
         # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
         # wocaR params
-        self.k_wst = config.k_wst
+        # k_wst starts at config.k_wst_start and moves towards config.k_wst
+        self.k_wst = config.k_wst_start
+        self.k_wst_step = (config.k_wst - config.k_wst_start)/(config.k_wst_frac*config.iterations)
         self.k_reg = config.k_reg
         self.attack_budget = config.attack_budget
         self.grad_steps = config.wocar_grad_steps
@@ -78,6 +83,13 @@ class WocaRDQN:
       return max(self.config.epsilon_min, epsilon + self.epsilon_step)
       #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
 
+    def k_wst_update(self, k_wst):
+      # here k_wst weighs the main qvalues and (1 - k_wst) the worst-case ones 
+      # (the convention from the paper)
+      # so it starts at k_wst_start = 1 (no worst-case) and DECREASES down to its
+      # target to give the worst-case qvalues more and more weight
+      return max(self.config.k_wst, k_wst + self.k_wst_step)
+
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
        loss.backward()
@@ -87,21 +99,6 @@ class WocaRDQN:
          max_norm=self.config.max_grad_norm
        )
        model.optimizer.step()
-
-    def getWocaMinQ(self, subset_actions, states):
-      with torch.no_grad():
-        # don't create a graph for qvalues either way it will bind qvalues to the graph
-        # and when the auto grad releases the tensor we can't use them anymore
-        # even though we return it (we return minQvalues which is bound to qvalues)
-        qvalues = self.woca_net(states.to(self.device)) # (B, 5)
-        # for each set of 5 qvalues only keep the qvalue associated
-        # to the action from subset_actions
-        # that has the minimum value
-        minQValues = torch.stack([
-          qvalues[row, idx].min()
-          for row, idx in enumerate(subset_actions)
-        ])
-      return minQValues
 
     def filter_actions(self, lb_q, ub_q):
       actions = []
@@ -477,7 +474,7 @@ class WocaRDQN:
         # rewards, dones and qvalues should all be on same device
         y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
         # calc y_main using MAIN NETWORK (network of the agent)
-        y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device) 
+        y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
         # calc loss
         loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
         loss_value = loss.item()
@@ -512,15 +509,22 @@ class WocaRDQN:
 
     @Timer.measure("WOCA network update")
     def _train_woca_network(self, states, actions, rewards, next_states, dones):
+              # the actions an attacker can force the agent to take from next_states
               subset_actions = self.getSubsetActions(next_states)
+              # calc y_woca_target for every sample of batch using WOCA TARGET NETWORK
+              # same as the main network, with the min over the attacker actions
+              # instead of the max over all the actions
               with torch.no_grad():
                 # no need to build a graph for calculating target
                 # (no backprop is computed)
-                woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
-                y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+                woca_qvalues = self.woca_target_net.getMinQ(next_states, self.env.action_space.n, self.device, subset_actions)
 
-              y_woca_predicted = self.woca_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
-              woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
+              y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+              # calc y_woca using WOCA NETWORK
+              y_woca = self.woca_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
+              # calc loss
+              woca_loss = self.woca_net.loss_fn(y_woca.squeeze(), y_woca_target)
+              # optimize
               self.optimize_model(woca_loss, self.woca_net)
 
     @Timer.measure("Robust network update")
@@ -531,7 +535,7 @@ class WocaRDQN:
               # and not the sum of the max (previous error)
               with torch.no_grad():
                 q_target = self.target_net(next_states)
-                q_woca = self.woca_net(next_states)
+                q_woca = self.woca_target_net(next_states)
               max_q_sum = (self.k_wst * q_target + (1 - self.k_wst) * q_woca).max(dim=1).values
               y_robust = rewards + self.config.gamma * max_q_sum * (1-dones)
               predicted_robust = self.robust_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
@@ -582,10 +586,12 @@ class WocaRDQN:
 
             if iteration % self.config.copy_freq == 0:
               self.target_net.load_state_dict(self.main_net.state_dict())
-              print("[!!] Weights of Target Network updated !")
+              self.woca_target_net.load_state_dict(self.woca_net.state_dict())
+              print("[!!] Weights of Target Networks updated !")
             iteration += 1
             state = new_state
-            self.config.epsilon = self.epsilon_update(self.config.epsilon)        
+            self.config.epsilon = self.epsilon_update(self.config.epsilon)
+            self.k_wst = self.k_wst_update(self.k_wst)        
           
           self.record.add_episode(nb_steps,
                                   episode_return,

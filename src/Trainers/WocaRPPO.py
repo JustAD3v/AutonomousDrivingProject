@@ -95,6 +95,7 @@ class WocaRPPO:
                  actor_network: nn.Module,
                  critic_network: nn.Module,
                  woca_network: nn.Module,
+                 woca_target_network: nn.Module,
                  policy,
                  env_name = "highway-fast-v0",
                  env_config = None,
@@ -124,6 +125,10 @@ class WocaRPPO:
         self.robust_actor_network = actor_network
         self.critic_network = critic_network
         self.woca_network = woca_network
+        self.woca_target_network = woca_target_network
+        # the worst-case network is a Q network, so it needs a target copy
+        # exactly as the main/target pair of the DQN version
+        self.woca_target_network.load_state_dict(self.woca_network.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
         self.buffer = PPOBufferExtended(self.config.buffer_size,
                                         self.device,
@@ -138,7 +143,11 @@ class WocaRPPO:
         self.nworkers = None
 
         # wocaR params
-        self.k_wst = config.k_wst
+        # k_wst starts low and grows towards config.k_wst: the paper increases the
+        # worst-case weight slowly, so the actor is not pushed by a worst-case
+        # network that is still untrained
+        self.k_wst = config.k_wst_start
+        self.k_wst_step = (config.k_wst - config.k_wst_start)/(config.k_wst_frac*config.iterations)
         self.k_reg = config.k_reg
         self.attack_budget = config.attack_budget
         self.grad_step_size = config.wocar_grad_step_size
@@ -156,6 +165,12 @@ class WocaRPPO:
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
         self._debug_calls = 0
         # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+    def k_wst_update(self, k_wst):
+        # k_wst weighs Q_wst, 
+        # so it grows from k_wst_start
+        # up to its target
+        return min(self.config.k_wst, k_wst + self.k_wst_step)
 
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
@@ -177,24 +192,6 @@ class WocaRPPO:
             if self.config.buffer_size % nworkers == 0:
                 return nworkers
         return 1
-
-    def getWocaMinQ(self, states, subset_actions=None):
-        with torch.no_grad():
-            # don't create a graph for qvalues either way it will bind qvalues to the graph
-            # and when the auto grad releases the tensor we can't use them anymore
-            # even though we return it (we return minQvalues which is bound to qvalues)
-            qvalues = self.woca_network(states.to(self.device)) # (B, 5)
-            # for each set of 5 qvalues only keep the qvalue associated
-            # to the action from subset_actions
-            # that has the minimum value
-            if subset_actions is not None:
-                minQValues = torch.stack([
-                    qvalues[row, idx].min()
-                    for row, idx in enumerate(subset_actions)
-                ])
-            else:
-                minQValues = qvalues.min(dim=1).values
-        return minQValues
 
     @Timer.measure("Prediction calculation")
     def _predict(self, state):
@@ -345,12 +342,23 @@ class WocaRPPO:
             with torch.no_grad():
                 min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
         else:
-            min_qvalues = self.getWocaMinQ(states)
+            min_qvalues = self.woca_network.getMinQ(states, self.env.action_space.n, self.device)
 
         critic_values = self.critic_network(states).squeeze(-1)
         # detach because w(s) does not need to be part of the graph for backprop
         # It can be treated as a constant
-        return torch.sub(critic_values, min_qvalues).detach()
+        w_states = torch.sub(critic_values, min_qvalues).detach()
+        # V - minQ is only meant to rank states by how costly a wrong action is
+        # If it is negative it will apply opposite effect
+        # basically lowering the total regularization 
+        # and potentially lowering the effect of other terms
+        # If the weight is negative, better ignoring it because the info is not meaningful
+        w_states = w_states.clamp(min=0.0)
+        # V directly depends on the scale of the rewards. 
+        # if the reward is not normalized (the case in some of our envs)
+        # then the values can be absurdly big compared to the rest of the loss
+        # so we need to rescale (+1e-8 to avoid division by zero)
+        return w_states / (w_states.mean() + 1e-8)
 
     def calcRegularization(self, states, grad_step_size, grad_steps):
         with torch.no_grad():
@@ -603,16 +611,18 @@ class WocaRPPO:
             with torch.no_grad():
                 woca_qvalues = self.woca_network(torch.cat((next_states, var_actions), dim=1)).squeeze(1)
         else:
+            # the actions an attacker can force the agent to take from next_states
             subset_actions = self.getSubsetActions(next_states)
+            # calc woca_qvalues using WOCA TARGET NETWORK
             with torch.no_grad():
-                # no need to build a graph for calculating target
-                # (no backprop is computed)
-                woca_qvalues = self.getWocaMinQ(next_states, subset_actions)
+                woca_qvalues = self.woca_target_network.getMinQ(next_states, self.env.action_space.n, self.device, subset_actions)
 
-        with torch.no_grad():        
-            y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
-        y_woca_predicted = self.woca_network.get_qvalues((states, actions, rewards, next_states, dones), self.device)
-        woca_loss = self.woca_network.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
+        y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+        # calc y_woca using WOCA NETWORK
+        y_woca = self.woca_network.get_qvalues((states, actions, rewards, next_states, dones), self.device)
+        # calc loss
+        woca_loss = self.woca_network.loss_fn(y_woca.squeeze(), y_woca_target)
+        # optimize
         self.optimize_model(woca_loss, self.woca_network)
 
     @Timer.measure("Robust actor network update")
@@ -633,7 +643,7 @@ class WocaRPPO:
             if self.config.ppo_continuous:
                 woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
             else:
-                woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+                woca_qvalues = self.woca_target_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
             # Q_wst is a value, not an advantage: its batch mean is large and positive
             # so need to be normalized to not override the action of the advantages
             # especially because advantages are also normalized 
@@ -766,8 +776,13 @@ class WocaRPPO:
                 # ============ OPTIMIZE ROBUST ACTOR =================
                     self._train_robust_actor_network(states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss)
 
+            # one copy per buffer run
+            self.woca_target_network.load_state_dict(self.woca_network.state_dict())
+            print("[!!] Weights of Woca Target Network updated !")
+
             self.buffer.reset()
             iteration += 1
+            self.k_wst = self.k_wst_update(self.k_wst)
             self.record.report_iteration(iteration)
 
     def learn(self) -> TrainResult:

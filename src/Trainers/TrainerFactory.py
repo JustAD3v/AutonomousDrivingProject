@@ -88,6 +88,7 @@ class TrainerFactory:
                 target_network = network_factory.create()
                 main_network = network_factory.create()
                 woca_network = network_factory.create()
+                woca_target_network = network_factory.create()
 
                 if config.pretrained_net is not None:
                     import torch
@@ -103,6 +104,7 @@ class TrainerFactory:
                     target_network=target_network,
                     main_network=main_network,
                     woca_network=woca_network,
+                    woca_target_network=woca_target_network,
                     robust_network=robust_network,
                     policy=policy,
                     env=env
@@ -171,6 +173,7 @@ class TrainerFactory:
                 actor_network = network_factory.create("actor")
                 critic_network = network_factory.create("critic")
                 woca_network = network_factory.create("woca")
+                woca_target_network = network_factory.create("woca")
 
                 if config.pretrained_net is not None or config.pretrained_critic_net is not None:
                     import torch
@@ -188,6 +191,7 @@ class TrainerFactory:
                     actor_network=actor_network,
                     critic_network=critic_network,
                     woca_network=woca_network,
+                    woca_target_network=woca_target_network,
                     policy=policy,
                     env=env
                 )

@@ -41,6 +41,8 @@
     "pretrained_net": "tests/models/dqn",
     "wocar_hinge_c": 0.3,
     "k_wst": 0.5,
+    "k_wst_start": 1.0,
+    "k_wst_frac": 0.8,
     "k_reg": 0.02,
     "attack_budget": 0.1,
     "wocar_grad_step_size":5e-4,

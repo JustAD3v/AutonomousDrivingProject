@@ -11,7 +11,7 @@
         "high_speed_reward": 1.0,
         "lane_change_reward": 0.02,
         "reward_speed_range": [
-            20,
+            25,
             40
         ],
         "normalize_reward": false,
@@ -19,12 +19,13 @@
         "policy_frequency": 1
     },
     "seed": 123123,
+    "parallel": true,
     "gamma": 0.95,
-    "buffer_size": 512,
-    "iterations": 30,
+    "buffer_size": 2048,
+    "iterations": 200,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
-    "ent_coef": 0.0,
+    "ent_coef": 0.02,
     "policy_kwargs": {
         "net_arch": [
             256,
@@ -42,9 +43,11 @@
     "ppo_minibatch_size": 64,
     "ppo_continuous": false,
     "k_wst": 0.5,
+    "k_wst_start": 0.0,
+    "k_wst_frac": 0.8,
     "k_reg": 0.02,
     "attack_budget": 0.1,
     "wocar_grad_step_size":5e-4,
     "wocar_grad_steps": 10,
-    "log_freq": 20
+    "log_freq": 10
 }
