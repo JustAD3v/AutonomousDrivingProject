@@ -224,12 +224,16 @@ class WocaRPPO:
         pgd_step_size = 2 * attack / grad_steps
 
         if self.config.ppo_continuous:
+            # Dist is the squared difference of the gaussian mean rather than the KL.
+            # The KL takes into account the standard deviation, 
+            # adding a 1/sigma^2 factor.
+            # Problem is that increasing sigma becomes a very good strategy
+            # to decrease the Dist. 
+            # But that's not what we want, 
+            # it would just spread the policy by a lot and break it
+            # So we only compute the Dist using the mean 
             with torch.no_grad():
-                # kl_divergence only supports calculation between Normal objects
-                # but distributions wraps Normal into an Independent(Normal) object
-                # which automates log prob summing
-                # So we unwrap it once to compute the kl_div on the base Normal
-                clean_base = self.robust_actor_network.distribution(states).base_dist
+                clean_means = self.robust_actor_network(states)
 
             # rescale the uniform sample from [0, 1] to [-1, 1]
             delta = (2.0 * torch.rand_like(states) - 1.0) * attack
@@ -237,11 +241,9 @@ class WocaRPPO:
             # find perturbation delta that maximizes the distance using gradient ascent
             for _ in range(grad_steps):
                 delta.requires_grad_(True)
-                p_base = self.robust_actor_network.distribution(states + delta).base_dist
-                # we have to do the sum() because we unwrapped clean_base and p_base from Independent
-                # which was responsible for doing that automatically
-                # .mean() is equivalent to reduction="batchmean" in kl_div for discrete actions
-                dist = torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
+                p_means = self.robust_actor_network(states + delta)
+                # mean of squarred differences
+                dist = (p_means - clean_means).pow(2).sum(dim=-1).mean()
                 grad = torch.autograd.grad(dist, delta)[0]
                 with torch.no_grad():
                     delta = torch.clamp(delta + pgd_step_size * grad.sign(), min=-attack, max=attack)
@@ -249,8 +251,8 @@ class WocaRPPO:
 
             # recompute on a fresh graph so the actor can backprop through it
             # returned per sample, so calcRegularization can weigh each state by w(s)
-            p_base = self.robust_actor_network.distribution(states + delta).base_dist
-            return torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1)
+            p_means = self.robust_actor_network(states + delta)
+            return (p_means - clean_means).pow(2).sum(dim=-1)
 
         # get distribution from the actor logits
         with torch.no_grad():

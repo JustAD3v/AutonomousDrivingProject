@@ -25,7 +25,7 @@
     "iterations": 50,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
-    "ent_coef": 0.0,
+    "ent_coef": 0.01,
     "policy_kwargs": {
         "net_arch": [
             256,
@@ -46,8 +46,8 @@
     "k_wst": 0.5,
     "k_wst_start": 0.0,
     "k_wst_frac": 0.8,
-    "k_reg": 0.0,
-    "attack_budget": 0.1,
+    "k_reg": 0.2,
+    "attack_budget": 0.05,
     "attack_budget_start": 0.0,
     "attack_budget_frac": 0.8,
     "wocar_grad_step_size": 5e-4,
