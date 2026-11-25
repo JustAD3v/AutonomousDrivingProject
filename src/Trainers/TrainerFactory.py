@@ -172,6 +172,14 @@ class TrainerFactory:
                 critic_network = network_factory.create("critic")
                 woca_network = network_factory.create("woca")
 
+                if config.pretrained_net is not None or config.pretrained_critic_net is not None:
+                    import torch
+                    if config.pretrained_net is not None:
+                        actor_network.load_state_dict(torch.load(config.pretrained_net))
+                    if config.pretrained_critic_net is not None:
+                        critic_network.load_state_dict(torch.load(config.pretrained_critic_net))
+                    print(f"[+] WocaR-PPO networks warm started from : {config.pretrained_net} / {config.pretrained_critic_net}")
+
                 policy = PPOPolicy(network=actor_network, action_space=env.action_space)
 
                 trainer = WocaRPPO(

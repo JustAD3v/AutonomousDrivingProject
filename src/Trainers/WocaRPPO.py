@@ -6,6 +6,7 @@ import highway_env
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 
+from Adversarial.AbstractAdversarial import Adversarial
 from Trainers.TrainConfig import TrainConfig
 from Trainers.PPOBufferExtended import PPOBufferExtended
 from Trainers.TrainResult import TrainResult
@@ -13,6 +14,10 @@ from Utils.Timer import Timer
 
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
+
+# ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+DEBUG_BOUNDS = True
+# ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
 _worker_env = None
 
@@ -138,6 +143,19 @@ class WocaRPPO:
         self.attack_budget = config.attack_budget
         self.grad_step_size = config.wocar_grad_step_size
         self.grad_steps = config.wocar_grad_steps
+        # perturbation set of the training: the same one the evaluation attacks use,
+        # a fraction of the half-range of each feature (see Adversarial.feature_scale_of)
+        # tiled over the rows of the observation to get (5,) => (25,)
+        # needed because during training we work with a flattened state : (25,) = concatenation of each row (5,)
+        self.attack_scale = torch.as_tensor(
+            np.tile(Adversarial.feature_scale_of(self.env), self.env.observation_space.shape[0]),
+            dtype=torch.float32,
+            device=self.device
+        )
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        self._debug_calls = 0
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
@@ -191,7 +209,10 @@ class WocaRPPO:
         states = states.detach()
 
         # init delta with random pertubration in [-attack; attack], element-wise
-        attack = self.attack_budget * states.abs()
+        # absolute budget scaled by the range of each feature, not relative to |s|:
+        # a feature close to 0 would otherwise get almost no perturbation, and the
+        # budget would not be comparable to the one the evaluation attacks apply
+        attack = self.attack_budget * self.attack_scale
 
         if self.config.ppo_continuous:
             with torch.no_grad():
@@ -232,6 +253,9 @@ class WocaRPPO:
         # rescale the uniform sample from [0, 1] to [-1, 1]
         delta = (2.0 * torch.rand_like(states) - 1.0) * attack
 
+        # attack-relative grad step
+        pgd_step_size = 2 * attack / grad_steps
+
         # find perturbation delta that maximizes the distance using gradient ascent
         dist = None
         for _ in range(grad_steps):
@@ -260,7 +284,7 @@ class WocaRPPO:
           with torch.no_grad():
               # don't include those calculations in the comutational graph
               delta = torch.clamp(
-                  delta + grad_step_size * grad,
+                  delta + pgd_step_size * grad.sign(),
                   min=-attack,
                   max=attack
               )
@@ -333,30 +357,36 @@ class WocaRPPO:
         reg = torch.mul(w_states, max_dist)
         return reg.mean()
 
-    def getSubsetActions(self, lb_q, ub_q):
+    def filter_actions(self, lb_q, ub_q):
         actions = []
         for (lb, ub) in zip(lb_q, ub_q):
             actions.append([
                # for each action i,
                i for i in range(len(lb))
-               # if there is an action j (i != j) with a lower bound lower than ub[i]
-               # then this action might be chosen
-               # because its qvalue domain covers a part of the domain of another action
+               # an action might be selected
+               # if it's upper bound is greater than ALL of the lower bounds of other actions
+               # because its logit domain covers a part of the domain of other POSSIBLE actions
+               # Previous error: only being greater than one of the other lower bound
+               #                is not enough because if the action considered overlaps with
+               #                an action that can't be chosen
+               #                then the considered action can't be chosen either
+               #                See explanation on paper, Algo 2, line 12 (https://arxiv.org/pdf/2210.05927)
                # You can think it the opposite way :
                # if all lb of other actions j are greater than ub[i],
-               # this action will never be chosen because its qvalue will always be lower
+               # this action will never be chosen because its logit will always be lower
                # than the one of the other actions
-               if any([ub[i] > lb[j] for j in range(len(lb)) if j != i])
+               if all([ub[i] > lb[j] for j in range(len(lb))])
             ])
         return actions
 
     def getActionBounds(self, states):
         # get lower and upper bound of perturbated states
-        lb_states = (states - states.abs() * self.attack_budget).to(
+        attack = self.attack_budget * self.attack_scale
+        lb_states = (states - attack).to(
             device=self.device,
             dtype=torch.float32
         )
-        ub_states = (states + states.abs() * self.attack_budget).to(
+        ub_states = (states + attack).to(
             device=self.device,
             dtype=torch.float32
         )
@@ -378,6 +408,155 @@ class WocaRPPO:
             method='CROWN'
         )
         return lb_qvalues, ub_qvalues
+
+    # Untargeted PGD variant
+    def getSubsetActionsPgdUntargeted(self, states):
+        states = states.detach().to(device=self.device, dtype=torch.float32)
+
+        attack = self.attack_budget * self.attack_scale
+        grad_steps = self.grad_steps
+        grad_step_size = 2 * attack / grad_steps
+
+        with torch.no_grad():
+            clean_logits = self.robust_actor_network(states)
+        n_actions = clean_logits.shape[1]
+        # the clean preferred action is always reachable (delta = 0)
+        best_actions = clean_logits.argmax(dim=1)
+        reached = F.one_hot(best_actions, n_actions).bool()
+
+        delta = (2.0 * torch.rand_like(states) - 1.0) * attack
+
+        for _ in range(grad_steps):
+            # every action already found
+            if reached.all():
+                break
+
+            delta.requires_grad_(True)
+
+            p_values = self.robust_actor_network(states + delta)
+
+            values_best = p_values.gather(1, best_actions.unsqueeze(1)).squeeze(1)
+            values_other = p_values.masked_fill(reached, float("-inf")).max(dim=1).values
+            # rows that have reached every action have no rival left, ignore them
+            valid = ~reached.all(dim=1)
+            margin = ((values_best - values_other) * valid).sum()
+
+            grad = torch.autograd.grad(margin, delta)[0]
+
+            with torch.no_grad():
+                delta = torch.clamp(
+                    delta - grad_step_size * grad.sign(),
+                    min=-attack,
+                    max=attack
+                )
+                # record the preferred action reached at this step
+                reached |= F.one_hot(
+                    self.robust_actor_network(states + delta).argmax(dim=1),
+                    n_actions
+                ).bool()
+            delta = delta.detach()
+
+        subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        if DEBUG_BOUNDS:
+            self._debug_subset(clean_logits, subset_actions, "PGD-UNTARGETED")
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+        return subset_actions
+
+    # Targeted PGD variant 
+    def getSubsetActions(self, states):
+        states = states.detach().to(device=self.device, dtype=torch.float32)
+
+        attack = self.attack_budget * self.attack_scale
+        grad_steps = self.grad_steps
+        # same relative step as getDistMax: cover the whole [-attack; attack] span
+        grad_step_size = 2 * attack / grad_steps
+
+        with torch.no_grad():
+            clean_values = self.robust_actor_network(states)
+        batch_size, n_actions = clean_values.shape
+        # the clean preferred action is always reachable (delta = 0)
+        best_actions = clean_values.argmax(dim=1)
+        reached = F.one_hot(best_actions, n_actions).bool()
+
+        # one targeted attack per candidate action
+        # An untargeted attack only explores one direction and systematically
+        # under-estimates the subset, which makes the worst-case value optimistic.
+        t_states = states.repeat(n_actions, 1) # process all 5 actions at once in a batch
+        targets = torch.arange(n_actions, device=self.device).repeat_interleave(batch_size)
+        t_best_actions = best_actions.repeat(n_actions)
+
+        delta = (2.0 * torch.rand_like(t_states) - 1.0) * attack
+
+        for _ in range(grad_steps):
+            delta.requires_grad_(True)
+
+            p_values = self.robust_actor_network(t_states + delta)
+
+            values_target = p_values.gather(1, targets.unsqueeze(1)).squeeze(1)
+            values_best = p_values.gather(1, t_best_actions.unsqueeze(1)).squeeze(1)
+            margin = (values_target - values_best).sum()
+
+            grad = torch.autograd.grad(margin, delta)[0]
+
+            with torch.no_grad():
+                delta = torch.clamp(
+                    delta + grad_step_size * grad.sign(),
+                    min=-attack,
+                    max=attack
+                )
+                # record the preferred action reached at this step, for every target block
+                p_best = self.robust_actor_network(t_states + delta).argmax(dim=1)
+                reached |= F.one_hot(p_best, n_actions).bool().view(
+                    n_actions, batch_size, n_actions
+                ).any(dim=0)
+            delta = delta.detach()
+
+        subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        if DEBUG_BOUNDS:
+            self._debug_subset(clean_values, subset_actions, "PGD")
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+        return subset_actions
+
+    # Certified variant: CROWN bounds on the actor values, then filter.
+    def getSubsetActionsCrown(self, states):
+        action_lb, action_ub = self.getActionBounds(states)
+        subset_actions = self.filter_actions(action_lb, action_ub)
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        if DEBUG_BOUNDS:
+            with torch.no_grad():
+                clean_logits = self.robust_actor_network(states)
+            self._debug_subset(clean_logits, subset_actions, "CROWN",
+                               width=(action_ub - action_lb).mean().item())
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+        return subset_actions
+
+    # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+    # spread : mean (max - min) of the clean logits, how far apart the actions are
+    # subset : mean size of the perturbed action set, the quantity to watch. A subset
+    #          stuck at 1 means the worst case is unconstrained, stuck at n_actions
+    #          means the constraint vanished
+    # width  : CROWN variant only, mean interval width. An action is pruned only if its
+    #          gap to the best one exceeds width, so the subset saturates while spread < width
+    def _debug_subset(self, clean_logits, subset_actions, tag, width=None):
+        self._debug_calls += 1
+        if self._debug_calls % self.config.log_freq:
+            return
+        spread = (clean_logits.max(dim=1).values - clean_logits.min(dim=1).values).mean().item()
+        subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+        message = (f"[DEBUG-{tag}] call={self._debug_calls} spread={spread:.4f} "
+                   f"subset={subset:.3f}")
+        if width is not None:
+            message += f" width={width:.4f} ratio={spread / max(width, 1e-12):.3f}"
+        print(message)
+    # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
     @Timer.measure("Critic network update")
     def _train_critic_network(self, states, returns):
@@ -420,8 +599,7 @@ class WocaRPPO:
             with torch.no_grad():
                 woca_qvalues = self.woca_network(torch.cat((next_states, var_actions), dim=1)).squeeze(1)
         else:
-            action_lb, action_ub = self.getActionBounds(states)
-            subset_actions = self.getSubsetActions(action_lb, action_ub)
+            subset_actions = self.getSubsetActions(next_states)
             with torch.no_grad():
                 # no need to build a graph for calculating target
                 # (no backprop is computed)

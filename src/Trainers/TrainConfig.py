@@ -30,6 +30,7 @@ class TrainConfig:
         self.wocar_grad_steps = 100
         self.wocar_hinge_c = 1.0
         self.pretrained_net = None
+        self.pretrained_critic_net = None
         self.ppo_actor_update_steps = 4
         self.ppo_critic_update_steps = 4
         self.ppo_update_epochs = 4
@@ -242,6 +243,10 @@ class TrainConfigBuilder:
 
     def pretrained_net(self, value):
         self._config.pretrained_net = value
+        return self
+
+    def pretrained_critic_net(self, value):
+        self._config.pretrained_critic_net = value
         return self
 
     def ppo_actor_update_steps(self, value):

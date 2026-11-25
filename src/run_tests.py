@@ -57,7 +57,7 @@ SCENARIOS = {
         "model_type": "sb3_dqn",
         "config": "sb3_dqn.json",
         "evals": [CLEAN, RANDOM_80],
-        "references": {"clean": 0.94, "fgsm_50": 0.08},
+        "references": {"clean": 0.94, "random_80": None},
     },
     "wocar_dqn": {
         "model_type": "wocar_dqn",
@@ -68,8 +68,8 @@ SCENARIOS = {
     "ppo": {
         "model_type": "ppo",
         "config": "ppo.json",
-        "evals": [CLEAN, FGSM_50, RANDOM_80],
-        "references": {"clean": 0.95, "fgsm_50": 0.04, "random_80": 0.74},
+        "evals": [CLEAN, FGSM_50, FGSM_10, RANDOM_80],
+        "references": {"clean": 0.95, "fgsm_50": 0.04, "fgsm_10": None, "random_80": 0.74},
     },
     "ppo_continuous": {
         "model_type": "ppo",
@@ -80,8 +80,8 @@ SCENARIOS = {
     "wocar_ppo": {
         "model_type": "wocar_ppo",
         "config": "wocar_ppo.json",
-        "evals": [CLEAN, FGSM_50],
-        "references": {"clean": 0.97, "fgsm_50": None},
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": 0.97, "fgsm_10": None, "random_80": None},
     },
 }
 

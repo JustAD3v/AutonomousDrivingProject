@@ -38,6 +38,9 @@ class TrainerWrapper:      #did we remove callback=None by accident?
             case _:
                 self.trainer.save(path)
         print(f"[+] Target network saved to file : {path}")
+        if self.trainer_type in ("ppo", "wocar_ppo"):
+            torch.save(self.trainer.critic_network.state_dict(), f"{path}_critic")
+            print(f"[+] Critic network saved to file : {path}_critic")
 
 
     def predict(self, state, deterministic=True):
