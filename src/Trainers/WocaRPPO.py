@@ -322,9 +322,12 @@ class WocaRPPO:
     def getMinQContinuous(self, states):
         states = states.detach()
         # the actor output is the gaussian mean, so bounding the actor bounds the forced action
-        # IBP+Backward (CROWN-IBP) is the relaxation the paper uses for continuous actions
-        action_lb, action_ub = self.getActionBounds(states, method="CROWN-IBP")
-        action_lb, action_ub = action_lb.detach(), action_ub.detach()
+        action_lb, action_ub = self.getActionBoundsPGD(states)
+        space_lb = torch.as_tensor(self.env.action_space.low, dtype=torch.float32, device=self.device)
+        space_ub = torch.as_tensor(self.env.action_space.high, dtype=torch.float32, device=self.device)
+        raw_width = (action_ub - action_lb).detach()
+        action_lb = action_lb.detach().clamp(min=space_lb, max=space_ub)
+        action_ub = action_ub.detach().clamp(min=space_lb, max=space_ub)
 
         with torch.no_grad():
             # s is in its own epsilon-ball, so the clean mean is always inside the box
@@ -355,16 +358,18 @@ class WocaRPPO:
             min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
 
             # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-            # width : box width, the continuous equivalent of the discrete "subset" size.
-            #         0 means the attacker can force nothing, above 2 (the action space
-            #         width) means the relaxation is too loose to constrain anything
-            # gap   : Q_wst(s, mean) - minQ, 0 means the descent found nothing
+            # width     : box width after the intersection, the continuous equivalent of
+            #             the discrete "subset" size. 0 means the attacker can force nothing
+            # raw_width : width before the intersection with the action space. Reaching 2
+            #             (the action space width) means the bounds constrain nothing
+            # gap       : Q_wst(s, mean) - minQ, 0 means the descent found nothing
             if DEBUG:
                 clean_qvalues = self.woca_network(torch.cat((states, action_means), dim=1)).squeeze(-1)
                 box_width = action_ub - action_lb
                 self._debug_log("MINQ",
                                 width=box_width.mean().item(),
                                 width_max=box_width.max().item(),
+                                raw_width=raw_width.mean().item(),
                                 gap=(clean_qvalues - min_qvalues).mean().item(),
                                 eps=self.attack_budget)
             # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
@@ -484,6 +489,65 @@ class WocaRPPO:
             method=method
         )
         return lb_qvalues, ub_qvalues
+
+    # Targeted PGD counterpart of getActionBounds, for continuous actions : the reachable
+    # interval of each action coordinate is estimated by attacking the state towards both
+    # of its extremes instead of relaxing the actor. The relaxation bounds grow with the
+    # weights, so they end up looser than the action space itself, while the PGD estimate
+    # only depends on the actual sensitivity of the mean. It under-approximates the
+    # reachable set instead of covering it, which is the deviation the discrete path
+    # already makes by using getSubsetActions over getSubsetActionsCrown
+    def getActionBoundsPGD(self, states):
+        states = states.detach().to(device=self.device, dtype=torch.float32)
+
+        attack = self.attack_budget * self.attack_scale
+        grad_steps = self.grad_steps
+        # same relative step as getDistMax: cover the whole [-attack; attack] span
+        grad_step_size = 2 * attack / grad_steps
+
+        with torch.no_grad():
+            clean_means = self.robust_actor_network(states)
+        batch_size, n_dims = clean_means.shape
+
+        # one targeted attack per coordinate and per direction, all stacked in a single
+        # batch as getSubsetActions does: block d pushes coordinate d up, block
+        # (n_dims + d) pushes it down
+        t_states = states.repeat(2 * n_dims, 1)
+        dims = torch.arange(n_dims, device=self.device).repeat(2).repeat_interleave(batch_size)
+        signs = torch.cat((
+            torch.ones(n_dims * batch_size, device=self.device),
+            -torch.ones(n_dims * batch_size, device=self.device)
+        ))
+
+        delta = (2.0 * torch.rand_like(t_states) - 1.0) * attack
+        # the clean mean is reached with delta = 0 so it always belongs to the box,
+        # which getMinQContinuous relies on to start its descent from it
+        action_lb = clean_means.clone()
+        action_ub = clean_means.clone()
+
+        with torch.enable_grad():
+            for _ in range(grad_steps):
+                delta.requires_grad_(True)
+
+                p_means = self.robust_actor_network(t_states + delta)
+                targeted = p_means.gather(1, dims.unsqueeze(1)).squeeze(1)
+                grad = torch.autograd.grad((signs * targeted).sum(), delta)[0]
+
+                with torch.no_grad():
+                    delta = torch.clamp(
+                        delta + grad_step_size * grad.sign(),
+                        min=-attack,
+                        max=attack
+                    )
+                    
+                    reached = self.robust_actor_network(t_states + delta)
+                    reached = reached.gather(1, dims.unsqueeze(1)).squeeze(1)
+                    reached = reached.view(2, n_dims, batch_size)
+                    action_ub = torch.maximum(action_ub, reached[0].t())
+                    action_lb = torch.minimum(action_lb, reached[1].t())
+                delta = delta.detach()
+
+        return action_lb, action_ub
 
     # Targeted PGD variant
     def getSubsetActions(self, states):
@@ -853,6 +917,17 @@ class WocaRPPO:
                 woca_advantages.append(self._woca_advantage(states, actions))
             woca_adv_scale = torch.cat(woca_advantages).std() + 1e-8
             woca_advantages = [advantage/woca_adv_scale for advantage in woca_advantages]
+
+            # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+            # adv_scale : action dependence of Q_wst before the rescale. Close to 0 means
+            #             the woca network ignores its action inputs and the rescale turns
+            #             numerical noise into a full strength signal
+            if DEBUG:
+                self._debug_log("WADV",
+                                every=1,
+                                adv_scale=woca_adv_scale.item(),
+                                target_scale=torch.cat(woca_targets).std().item())
+            # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
             for _ in range(self.config.ppo_update_epochs):
                 for minibatch, woca_advantage in zip(minibatches, woca_advantages):
