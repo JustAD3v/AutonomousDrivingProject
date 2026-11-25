@@ -15,7 +15,7 @@ class FGSMAdversarial(Adversarial):
             # cache the mean per feature 
             # This allows for an attack with fix bound
             # but with relative value meaningful for each feature 
-            self.mean_per_feature = state_tensor.reshape(shape).mean(dim=0).repeat(5,1)      
+            self.mean_per_feature = state_tensor.reshape(shape).mean(dim=0).abs().repeat(5,1)    
         q_values = self.policy.network(state_tensor)
         action = q_values.argmax()
         loss = q_values[action]
