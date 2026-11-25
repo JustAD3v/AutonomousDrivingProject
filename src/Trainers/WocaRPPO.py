@@ -95,7 +95,6 @@ class WocaRPPO:
                  actor_network: nn.Module,
                  critic_network: nn.Module,
                  woca_network: nn.Module,
-                 woca_target_network: nn.Module,
                  policy,
                  env_name = "highway-fast-v0",
                  env_config = None,
@@ -125,10 +124,6 @@ class WocaRPPO:
         self.robust_actor_network = actor_network
         self.critic_network = critic_network
         self.woca_network = woca_network
-        self.woca_target_network = woca_target_network
-        # the worst-case network is a Q network, so it needs a target copy
-        # exactly as the main/target pair of the DQN version
-        self.woca_target_network.load_state_dict(self.woca_network.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
         self.buffer = PPOBufferExtended(self.config.buffer_size,
                                         self.device,
@@ -580,8 +575,8 @@ class WocaRPPO:
         loss = self.critic_network.loss_fn(critic_values, returns)
         self.optimize_model(loss, self.critic_network)
 
-    @Timer.measure("WOCA network update")
-    def _train_woca_network(self, states, actions, rewards, next_states, dones):
+    @Timer.measure("WOCA target calculation")
+    def _woca_target(self, rewards, next_states, dones):
         if self.config.ppo_continuous:
             action_lb, action_ub = torch.tensor(self.env.action_space.low), torch.tensor(self.env.action_space.high)
             with torch.no_grad():
@@ -617,16 +612,15 @@ class WocaRPPO:
         else:
             # the actions an attacker can force the agent to take from next_states
             subset_actions = self.getSubsetActions(next_states)
-            # calc woca_qvalues using WOCA TARGET NETWORK
             with torch.no_grad():
-                woca_qvalues = self.woca_target_network.getMinQ(next_states, self.env.action_space.n, self.device, subset_actions)
+                woca_qvalues = self.woca_network.getMinQ(next_states, self.env.action_space.n, self.device, subset_actions)
 
-        y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
-        # calc y_woca using WOCA NETWORK
+        return rewards + self.config.gamma * woca_qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+
+    @Timer.measure("WOCA network update")
+    def _train_woca_network(self, states, actions, rewards, next_states, dones, y_woca_target):
         y_woca = self.woca_network.get_qvalues((states, actions, rewards, next_states, dones), self.device)
-        # calc loss
         woca_loss = self.woca_network.loss_fn(y_woca.squeeze(), y_woca_target)
-        # optimize
         self.optimize_model(woca_loss, self.woca_network)
 
     @Timer.measure("Robust actor network update")
@@ -647,7 +641,7 @@ class WocaRPPO:
             if self.config.ppo_continuous:
                 woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
             else:
-                woca_qvalues = self.woca_target_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+                woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
             # Q_wst is a value, not an advantage: its batch mean is large and positive
             # so need to be normalized to not override the action of the advantages
             # especially because advantages are also normalized 
@@ -774,14 +768,17 @@ class WocaRPPO:
             # the worst-case network is a Q network trained by regression, it does not
             # depend on the PPO ratio, so it gets its own passes over the batch before
             # the policy update : Q_wst then stays fixed while the actor epochs run
-            for _ in range(self.config.woca_update_epochs):
-                for minibatch in minibatches:
-                    states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
-                    self._train_woca_network(states, actions, rewards, next_states, dones)
+            # the targets are calculated once, before any update, so they stay constant
+            # for every epoch and the regression has a fixed objective
+            woca_targets = []
+            for minibatch in minibatches:
+                _, _, _, _, _, rewards, next_states, dones = self._cast_minibatch(minibatch)
+                woca_targets.append(self._woca_target(rewards, next_states, dones))
 
-            # one copy per buffer run
-            self.woca_target_network.load_state_dict(self.woca_network.state_dict())
-            print("[!!] Weights of Woca Target Network updated !")
+            for _ in range(self.config.woca_update_epochs):
+                for minibatch, y_woca_target in zip(minibatches, woca_targets):
+                    states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
+                    self._train_woca_network(states, actions, rewards, next_states, dones, y_woca_target)
 
             for _ in range(self.config.ppo_update_epochs):
                 for minibatch in minibatches:
