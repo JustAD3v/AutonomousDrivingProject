@@ -16,6 +16,8 @@ from pathlib import Path
 
 import torch
 
+from stable_baselines3 import DQN, PPO
+
 from Trainers.TrainConfig import TrainConfig
 from Evaluator.Evaluator import Evaluator
 from Policies.CustomPolicy import CustomPolicy
@@ -43,38 +45,42 @@ CLEAN = {"name": "clean", "attack": None, "attack_bound": 0.0}
 FGSM_50 = {"name": "fgsm_50", "attack": "fgsm", "attack_bound": 0.5}
 RANDOM_80 = {"name": "random_80", "attack": "random", "attack_bound": 0.8}
 
-# baseline = success rate measured before this test script existed (seed 123123).
-# "None" means no reference value was recorded for that variant yet.
 SCENARIOS = {
     "dqn": {
         "model_type": "dqn",
         "config": "dqn.json",
         "evals": [CLEAN, FGSM_50],
-        "baselines": {"clean": 0.94, "fgsm_50": 0.08},
+        "references": {"clean": 0.99, "fgsm_50": 0.16},
+    },
+    "sb3_dqn": {
+        "model_type": "sb3_dqn",
+        "config": "sb3_dqn.json",
+        "evals": [CLEAN, RANDOM_80],
+        "references": {"clean": 0.94, "fgsm_50": 0.08},
     },
     "wocar_dqn": {
         "model_type": "wocar_dqn",
         "config": "wocar_dqn.json",
         "evals": [CLEAN, FGSM_50],
-        "baselines": {"clean": 0.92, "fgsm_50": 0.80},
+        "references": {"clean": 0.92, "fgsm_50": 0.80},
     },
     "ppo": {
         "model_type": "ppo",
         "config": "ppo.json",
         "evals": [CLEAN, FGSM_50, RANDOM_80],
-        "baselines": {"clean": 0.84, "fgsm_50": 0.04, "random_80": 0.74},
+        "references": {"clean": 0.95, "fgsm_50": 0.04, "random_80": 0.74},
     },
     "ppo_continuous": {
         "model_type": "ppo",
         "config": "ppo_continuous.json",
         "evals": [CLEAN, FGSM_50],
-        "baselines": {"clean": 0.77, "fgsm_50": 0.19},
+        "references": {"clean": 0.77, "fgsm_50": 0.19},
     },
     "wocar_ppo": {
         "model_type": "wocar_ppo",
         "config": "wocar_ppo.json",
         "evals": [CLEAN, FGSM_50],
-        "baselines": {"clean": 0.97, "fgsm_50": None},
+        "references": {"clean": 0.97, "fgsm_50": None},
     },
 }
 
@@ -95,7 +101,10 @@ def load_policy(scenario, config, model_path, env):
             network = ActorNetwork()
         network.load_state_dict(torch.load(model_path))
         return PPOPolicy(network=network, action_space=env.action_space)
-
+    elif scenario["model_type"] == "sb3_dqn":
+        return DQN.load(model_path.with_suffix(".zip"))
+    elif scenario["model_type"] == "sb3-ppo":
+        return PPO.load(model_path.with_suffix(".zip")) 
     network = StateOnlyNN()
     network.load_state_dict(torch.load(model_path))
     return CustomPolicy(network=network, action_space=env.action_space)
@@ -135,8 +144,10 @@ def train_scenario(scenario, config, model_path):
         env=EnvFactory.create(config),
         policy_str="MlpPolicy",
     )
-    trainer.learn()
+    results = trainer.learn()
     trainer.save(str(model_path))
+    if results is not None:
+        results.plot(path=f"{model_path}_curves.png")
 
 
 def evaluate_variant(name, variant_name, episodes):
@@ -161,6 +172,8 @@ def train_scenario_result(name, skip_train):
     scenario = SCENARIOS[name]
     config = load_config(scenario)
     model_path = MODEL_DIR / name
+    if "sb3" in name:
+        model_path = model_path.with_suffix(".zip")
     started = time.perf_counter()
 
     if skip_train:
@@ -198,7 +211,7 @@ def evaluate_all(results, episodes, workers):
             by_name[name]["evals"][variant_name] = summary
 
 def result(name, variant_name, success_rate):
-    baseline = SCENARIOS[name]["baselines"].get(variant_name)
+    baseline = SCENARIOS[name]["references"].get(variant_name)
     if baseline is None:
         return "NEW", baseline
     return ("OK" if abs(success_rate - baseline) <= TOLERANCE else "DRIFT"), baseline
@@ -239,7 +252,7 @@ def save_results(results, path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run the training/evaluation scenarios and compare them to their baselines.",
+        description="Run the training/evaluation scenarios and compare them to their references.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

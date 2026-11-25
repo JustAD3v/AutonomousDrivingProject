@@ -224,10 +224,7 @@ def main():
             results = trainer.learn()
             trainer.save(NETWORK_FILE)
             if results is not None:
-                if args.container:
-                    results.plot(path=f"{NETWORK_FILE}_curves.png")
-                else:
-                    results.plot()
+                results.plot(path=f"{NETWORK_FILE}_curves.png")
 
     else:
         match MODEL_TYPE:
