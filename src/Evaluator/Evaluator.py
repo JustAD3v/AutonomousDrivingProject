@@ -79,9 +79,8 @@ class Evaluator:
                 time.sleep(self.render_delay)
             choices_dict = self.choices_summary(episode_choices, episode_steps)
             self.record.add_episode(episode_steps, episode_return, success=trunc, details=str(choices_dict))
+        self.record.add_choices(self.choices_summary(choices, steps))
         self.record.report_final()
-        choices_dict = self.choices_summary(choices, steps)
-        print(f"[+] Action choices : {choices_dict}")
         self.env.close()
         return self.record
 

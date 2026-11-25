@@ -20,6 +20,9 @@ class EvalResult(Results):
     def success_count(self):
         return sum(self.successes)
 
+    def add_choices(self, choices):
+        self.choices_summary = choices
+
     def summary(self):
         data = super().summary()
         data["model"] = self.model
@@ -30,6 +33,7 @@ class EvalResult(Results):
         data["successes"] = self.success_count()
         data["crashes"] = self.episode_count - self.success_count()
         data["success_rate"] = self.success_count()/self.episode_count if self.episode_count else float("nan")
+        data["choices"] = self.choices_summary
         return data
 
     def report_episode(self, details=""):
@@ -47,4 +51,5 @@ class EvalResult(Results):
         lines.append(f"Model = {data['model']}")
         if data['attack'] != "NeutralAdversarial":
             lines.append(f"Attack = {data['attack']} | Attack bound = {data['attack_bound']}")
+        lines.append(f"Action choices : {data['choices']}")
         return lines
