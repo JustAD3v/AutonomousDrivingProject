@@ -1,8 +1,9 @@
 # Autonomous Driving Project
 
 This project trains and evaluates reinforcement-learning agents in the
-`highway-fast-v0` environment from `highway-env`. The command-line entry point
-is `src/main.py`.
+environments of `highway-env` (`highway-fast-v0` by default, selectable with
+`--env`). The command-line entry point is `src/main.py`; `src/run_tests.py`
+replays a fixed set of scenarios for regression checking.
 
 ## Project structure
 
@@ -60,9 +61,10 @@ Source layout:
 | `src/Networks/`     | Networks (`StateOnlyNN`, `ActorNetwork`, `CriticNetwork`, `WocaPPONN`) and `NetworkFactory` |
 | `src/Policies/`     | `CustomPolicy` (value-based) and `PPOPolicy` (discrete or continuous)      |
 | `src/Adversarial/`  | Observation attacks: `FGSMAdversarial`, `RandomAdversarial`, `NeutralAdversarial` |
-| `src/Environments/` | `CustomHighwayEnv` (registered as `custom-highway-v0`) and `CustomVehicle` |
+| `src/Environments/` | `CustomHighwayEnv` (registered as `custom-highway-v0`), `CustomVehicle` and `EnvWrapper` (per-environment success condition) |
 | `src/Evaluator/`    | `Evaluator` and `EvalResult`                                               |
 | `src/Utils/`        | `EnvFactory`, `Results`, `ResultsTable`, `Timer`                           |
+| `src/run_tests.py`  | Test framework: trains and evaluates the scenarios of `tests/configs/` and compares them to reference success rates |
 
 ## Setup
 
@@ -130,6 +132,44 @@ For example, a config file can contain:
 }
 ```
 
+The configured `learning_rate` is applied to every network built by
+`NetworkFactory`, and the network input/output sizes are derived from the
+environment (observation size, discrete action count, or action dimension in
+continuous mode) instead of being hardcoded.
+
+Besides the PPO and WOCA-R parameters already present, the WOCA-R PPO
+continuous path reads these `TrainConfig` fields:
+
+| Field                   | Meaning                                                                 |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `woca_update_epochs`    | Passes of the worst-case network over a collected batch.                |
+| `woca_baseline_samples` | Actions sampled per state for the Monte-Carlo weighted baseline of the continuous worst-case advantage. |
+| `log_std_min`           | Floor of the continuous actor's log standard deviation, i.e. a sigma floor of `exp(log_std_min)`. |
+
+#### Environment
+
+`--env` selects the `highway-env` environment id to train or evaluate in; it
+overrides `env_name` from the config file (default `highway-fast-v0`):
+
+```powershell
+python src/main.py --train --model_type ppo --env merge-v1
+```
+
+`EnvFactory` wraps every environment in `EnvWrapper`, which adds a
+`success` entry to the `info` dict so the evaluator counts successes the same
+way for all environments. The condition depends on the environment:
+
+| Environment      | Success                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `merge-v1`       | ego vehicle past `x = 370` without crashing                   |
+| `exit-v0`        | environment reports `is_success` without crashing             |
+| `intersection-v0`| ego vehicle arrived (`has_arrived`) without crashing          |
+| others           | episode truncated, i.e. survived until the time limit         |
+
+Note that the configured `env_config` is passed to whichever environment is
+selected, so values that only exist for the highway scenarios (such as
+`lanes_count`) may be ignored or rejected by another environment.
+
 #### Continuous actions (PPO)
 
 `--continuous` switches the PPO trainers and the evaluator to the
@@ -158,6 +198,48 @@ python src/main.py --train --model_type ppo --parallel
 
 Each worker builds its own environment from the same config, so collection
 stays identical to the sequential path.
+
+### Train in a container
+
+Training can run inside a Docker container, which avoids installing the
+dependencies locally. The image is CPU-only (see `Dockerfile` and
+`container-requirements.txt`), so it is meant for training, not for rendering
+or evaluating with a window.
+
+`docker-compose.yaml` defines a single `train` service with two mounts:
+
+- `./models` is mounted read-write, so checkpoints and training curves written
+  by the container stay on the host;
+- `./src` is mounted read-only, so changing the code does not need an image
+  rebuild.
+
+Build the image once:
+
+```powershell
+docker compose build
+```
+
+Then use the shortcut script for your shell, which forwards every argument to
+`src/main.py` and adds `--container`:
+
+```powershell
+./train.ps1 --train --model_type ppo --parallel
+```
+
+```bash
+./train.sh --train --model_type ppo --parallel
+```
+
+Both are equivalent to:
+
+```powershell
+docker compose run --rm train python src/main.py --container --train --model_type ppo --parallel
+```
+
+`--container` only changes how the results are reported: the training curves
+are saved next to the checkpoint as `<net_file>_curves.png` instead of being
+shown in a window, since a container has no display. Write the checkpoint
+under `models/` (the default) so that both it and the curves land on the host.
 
 ### Parameter sweeps
 
@@ -239,12 +321,67 @@ python src/main.py --model_type dqn --net_file models\targetNetwork_trained --ad
 ```
 
 `--attack_bound` is not an absolute perturbation size: it is a fraction of the
-average value of each observation feature. Both attacks compute, once, the
-mean over the rows (the vehicles) of the observation for every feature, and
-scale the perturbation of that feature by `attack_bound * mean_feature`. The
-bound is therefore fixed, but relative to a realistic magnitude per feature,
-so a given `--attack_bound` perturbs features of different scales (positions,
-speeds, ...) by a comparable proportion instead of overwhelming the small ones.
+range of each observation feature. Both attacks read those ranges from the
+evaluated environment (its observation `features` and `features_range`) and
+scale the perturbation of a feature by `attack_bound * half_range_feature`.
+Features the environment normalizes are mapped to `[-1, 1]`, so their half-range
+is `1`; features it leaves unnormalized keep their own range (`presence` lives in
+`[0, 1]`, half-range `0.5`). The bound is therefore fixed, but relative to the
+range of every feature, so a given `--attack_bound` perturbs features of
+different scales (positions, speeds, ...) by a comparable proportion instead of
+overwhelming the small ones.
+
+### Reproducible test runs
+
+`src/run_tests.py` is a small test framework used to check that a change does
+not degrade the agents. It trains one checkpoint per scenario, then
+evaluates it under several attack variants and compares each success rate to a
+reference value recorded in the script.
+
+Each scenario is a `(model_type, config file, evaluation variants, reference
+success rates)` entry of the `SCENARIOS` dict at the top of the script. The
+config files live in `tests/configs/`:
+
+| Scenario               | Model type  | Config                             |
+| ---------------------- | ----------- | ---------------------------------- |
+| `dqn`                  | `dqn`       | `dqn.json`                         |
+| `sb3_dqn`              | `sb3_dqn`   | `sb3_dqn.json`                     |
+| `wocar_dqn`            | `wocar_dqn` | `wocar_dqn.json`                   |
+| `ppo`                  | `ppo`       | `ppo.json`                         |
+| `ppo_continuous`       | `ppo`       | `ppo_continuous.json`              |
+| `wocar_ppo`            | `wocar_ppo` | `wocar_ppo.json`                   |
+| `wocar_ppo_continuous` | `wocar_ppo` | `wocar_ppo_continuous.json`        |
+
+The evaluation variants are `clean`, `fgsm_10`, `fgsm_50` and `random_80`
+(the number is the `attack_bound` in percent). Variants are evaluated in
+parallel processes. A scenario is reported as `DRIFT` when a success rate moves
+further than `TOLERANCE` (0.10) from its reference, `NEW` when no reference is
+recorded yet, and `OK` otherwise. Checkpoints go to `tests/models/`, and a JSON
+report to `tests/results/<timestamp>.json`.
+
+Scenarios whose model type is in `CONTAINER_MODEL_TYPES` (`ppo` and
+`wocar_ppo`) are trained through `docker compose run train` instead of
+in-process, so the container image must be built first (see
+[Train in a container](#train-in-a-container)).
+
+```powershell
+python src/run_tests.py --list
+python src/run_tests.py
+python src/run_tests.py --only ppo ppo_continuous
+python src/run_tests.py --exclude wocar_dqn --skip-train
+python src/run_tests.py --skip-train --only-attack clean fgsm_10 --episodes 50
+```
+
+| Option                     | Description                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| `--list`                   | List the scenarios (name, model type, config, variants) and exit.             |
+| `--only NAME [NAME ...]`   | Run only these scenarios (default: all).                                     |
+| `--exclude NAME [NAME ...]`| Skip these scenarios.                                                        |
+| `--only-attack NAME [...]` | Run only these evaluation variants (`clean`, `fgsm_10`, `fgsm_50`, `random_80`). |
+| `--skip-train`             | Reuse the checkpoints already in `tests/models/` instead of training.        |
+| `--workers INTEGER`        | Number of parallel evaluation workers (default: one per scenario variant).   |
+| `--episodes INTEGER`       | Evaluation episodes per variant (default: 100).                              |
+| `--out PATH`               | Where to write the result file (default `tests/results/<timestamp>.json`).   |
 
 ### Available options
 
@@ -252,6 +389,7 @@ speeds, ...) by a comparable proportion instead of overwhelming the small ones.
 | -------------------------------------- | -------------------------------------------------------------- |
 | `--train`                              | Train and save a model instead of evaluating one.              |
 | `--model_type {dqn,sb3_dqn,wocar_dqn,ppo,wocar_ppo,sb3-ppo}` | Select the training/evaluation model. Defaults to `dqn`. |
+| `--env ENV_ID`                         | Environment id to train or evaluate in, overriding the config (default `highway-fast-v0`). |
 | `--net_file PATH`                      | Checkpoint path to load for evaluation or save after training. |
 | `--model_dir PATH`                     | Directory where a sweep saves one model per run (default `./models`). Only used with `--sweep`. |
 | `--config PATH`                        | JSON file containing training configuration overrides.         |
@@ -259,6 +397,7 @@ speeds, ...) by a comparable proportion instead of overwhelming the small ones.
 | `--continuous`                         | Use the continuous action space (PPO only), for training and evaluation. |
 | `--sweep`                              | Run the parameter sweep defined in `main.py` instead of a single training run (experimental). |
 | `--parallel`                           | Collect PPO samples in parallel worker processes (training only). |
+| `--container`                          | Container mode (training only): save the training curves next to the checkpoint instead of showing them in a window. |
 | `--render_human`                       | Render the environment during evaluation.                      |
 | `--render_delay SECONDS`               | Delay between evaluation steps.                                |
 | `--adversarial`                        | Enable adversarial perturbations during evaluation.            |
