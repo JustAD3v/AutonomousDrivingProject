@@ -37,6 +37,7 @@ class TrainConfig:
         self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
         self.ppo_continuous = False
         self.log_freq = 10
+        self.parallel = False
 
         # PPO params (used by the "ppo" trainer). PPO is on-policy, so its training
         # length is counted in environment steps (total_timesteps), not `iterations`.
@@ -282,6 +283,10 @@ class TrainConfigBuilder:
     def seed(self, value):
         self._config.seed = value
         return self
+
+    def parallel(self, value):
+        self._config.parallel = value
+        return self
     
     # ---- PPO ----
     def total_timesteps(self, value):
@@ -330,10 +335,7 @@ class TrainConfigBuilder:
 
     def tensorboard_log(self, value):
         self._config.tensorboard_log = value
-        return self
-
-    def build(self):
-        return self._config 
+        return self 
     
     def eval_freq(self, value):
         self._config.eval_freq = value
@@ -346,3 +348,6 @@ class TrainConfigBuilder:
     def log_path(self, value):
         self._config.log_path = value
         return self
+
+    def build(self):
+        return self._config

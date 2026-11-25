@@ -11,8 +11,6 @@ from Trainers.PPOBuffer import PPOBuffer
 from Trainers.TrainResult import TrainResult
 from Utils.Timer import Timer
 
-PARALLEL = True
-
 def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
     env = gym.make(env_name, config=env_config)
     state, _ = env.reset()
@@ -72,6 +70,7 @@ class PPOTrainer:
                  env_config = None,
                  env = None,
                  use_gpu = False):
+        
         self.timer = Timer()
 
         if env is not None:
@@ -206,7 +205,7 @@ class PPOTrainer:
 
         while iteration < self.config.iterations:
             # ============ COLLECT SAMPLES INTO BATCHES =========
-            self._collect_samples(PARALLEL)
+            self._collect_samples(self.config.parallel)
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
             
             # ============ GET BATCH =====================

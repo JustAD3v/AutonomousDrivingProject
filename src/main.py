@@ -124,6 +124,12 @@ def main():
         default=False,
         help="Launch sweep runs (experimental feature, test only)",
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        default=False,
+        help="Parallelize sample collection (training only)",
+    )
 
     args = parser.parse_args()
 
@@ -185,6 +191,10 @@ def main():
     # overwrite continuous mode if in args
     if args.continuous:
         train_config.ppo_continuous = True
+
+    # set parallel option in training mode
+    if args.train:
+        train_config.parallel = args.parallel
 
     # centralized env_config
     env_config = EnvFactory.env_config(train_config)
