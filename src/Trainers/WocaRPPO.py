@@ -239,8 +239,9 @@ class WocaRPPO:
                 delta = delta.detach()
 
             # recompute on a fresh graph so the actor can backprop through it
+            # returned per sample, so calcRegularization can weigh each state by w(s)
             p_base = self.robust_actor_network.distribution(states + delta).base_dist
-            return torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
+            return torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1)
 
         # get distribution from the actor logits
         with torch.no_grad():
@@ -301,9 +302,9 @@ class WocaRPPO:
         final_dist = F.kl_div(
           p_probs,
           probs,
-          reduction="batchmean",
+          reduction="none",
           log_target=True
-        )
+        ).sum(dim=1)
 
         return final_dist
 
@@ -352,7 +353,10 @@ class WocaRPPO:
         return torch.sub(critic_values, min_qvalues).detach()
 
     def calcRegularization(self, states, grad_step_size, grad_steps):
-        w_states = self.getStateWeight(states)
+        with torch.no_grad():
+            # w(s) does not need to be part of the graph for backprop
+            # It can be treated as a constant
+            w_states = self.getStateWeight(states)
         max_dist = self.getDistMax(states, grad_step_size, grad_steps)
         reg = torch.mul(w_states, max_dist)
         return reg.mean()
@@ -625,10 +629,15 @@ class WocaRPPO:
             1.0 + self.clip_epsilon
         )
         
-        if self.config.ppo_continuous:
-            woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
-        else:
-            woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        with torch.no_grad():
+            if self.config.ppo_continuous:
+                woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
+            else:
+                woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+            # Q_wst is a value, not an advantage: its batch mean is large and positive
+            # so need to be normalized to not override the action of the advantages
+            # especially because advantages are also normalized 
+            woca_qvalues = (woca_qvalues - woca_qvalues.mean()) / (woca_qvalues.std(unbiased=False) + 1e-8)
         woca_advantages = advantages + self.k_wst * woca_qvalues
         unclipped_objective = ratio * woca_advantages
         clipped_objective = clipped_ratio * woca_advantages
