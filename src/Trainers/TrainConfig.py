@@ -19,22 +19,35 @@ class TrainConfig:
         self.train_freq = 1
         self.iterations = 500
         self.learning_rate = 5e-4
+        self.max_grad_norm = 0.5
+        self.ent_coef = 0.02
         self.policy_kwargs = dict(net_arch=[256, 256])
         self.seed = random.getrandbits(32)
         self.k_wst = 0.5
+        self.k_wst_start = 0.0
+        self.k_wst_frac = 0.8
         self.k_reg = 0.2
         self.attack_budget = 0.05
+        self.attack_budget_start = 0.0
+        self.attack_budget_frac = 0.8
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
+        self.wocar_hinge_c = 1.0
+        self.pretrained_net = None
+        self.pretrained_critic_net = None
         self.ppo_actor_update_steps = 4
         self.ppo_critic_update_steps = 4
         self.ppo_update_epochs = 4
+        self.woca_update_epochs = 4  # passes of the worst-case network over a batch
+        self.woca_baseline_samples = 8  # actions sampled per state for the continuous woca advantage baseline
+        self.log_std_min = -5.0  # sigma floor of the continuous actor, as exp(log_std_min)
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
         self.ppo_nworkers = 8
-        self.ppo_minibatch_size = self.ppo_nworkers * self.buffer_size # default takes the whole buffer
+        self.ppo_minibatch_size = None # default takes the whole buffer
         self.ppo_continuous = False
         self.log_freq = 10
+        self.parallel = False
 
         # PPO params (used by the "ppo" trainer). PPO is on-policy, so its training
         # length is counted in environment steps (total_timesteps), not `iterations`.
@@ -45,9 +58,7 @@ class TrainConfig:
         self.ppo_gamma = 0.90
         self.gae_lambda = 0.8
         self.clip_range = 0.2
-        self.ent_coef = 0.01
         self.vf_coef = 0.5
-        self.max_grad_norm = 0.5
         self.ppo_net_arch = [256, 256]   # same width as the DQN network, for a fair comparison
         self.tensorboard_log = None      # e.g. "./tb_logs/" (needs tensorboard installed)
         self.n_envs = 8 #number of envs. 
@@ -55,8 +66,8 @@ class TrainConfig:
         self.best_model_save_path = "./logs/"
         self.log_path = "./logs/"
 
-    def to_json(self):
-        return json.dumps(self.__dict__)
+    def to_json(self, pretty=False):
+        return json.dumps(self.__dict__, indent=4 if pretty else None)            
 
     def from_json(self, value):
         self.__dict__.update(json.loads(value))
@@ -209,10 +220,22 @@ class TrainConfigBuilder:
         self._config.learning_rate = value
         return self
     
+    def max_grad_norm(self, value):
+        self._config.max_grad_norm = value
+        return self
+    
     def k_wst(self, value):
         self._config.k_wst = value
         return self
-    
+
+    def k_wst_start(self, value):
+        self._config.k_wst_start = value
+        return self
+
+    def k_wst_frac(self, value):
+        self._config.k_wst_frac = value
+        return self
+
     def k_reg(self, value):
         self._config.k_reg = value
         return self
@@ -220,7 +243,15 @@ class TrainConfigBuilder:
     def attack_budget(self, value):
         self._config.attack_budget = value
         return self
-    
+
+    def attack_budget_start(self, value):
+        self._config.attack_budget_start = value
+        return self
+
+    def attack_budget_frac(self, value):
+        self._config.attack_budget_frac = value
+        return self
+
     def wocar_grad_step_size(self, value):
         self._config.wocar_grad_step_size = value
         return self
@@ -228,7 +259,19 @@ class TrainConfigBuilder:
     def wocar_grad_steps(self, value):
         self._config.wocar_grad_steps = value
         return self
-    
+
+    def wocar_hinge_c(self, value):
+        self._config.wocar_hinge_c = value
+        return self
+
+    def pretrained_net(self, value):
+        self._config.pretrained_net = value
+        return self
+
+    def pretrained_critic_net(self, value):
+        self._config.pretrained_critic_net = value
+        return self
+
     def ppo_actor_update_steps(self, value):
         self._config.ppo_actor_update_steps = value
         return self
@@ -237,6 +280,18 @@ class TrainConfigBuilder:
         self._config.ppo_critic_update_steps = value
         return self
     
+    def woca_update_epochs(self, value):
+        self._config.woca_update_epochs = value
+        return self
+
+    def woca_baseline_samples(self, value):
+        self._config.woca_baseline_samples = value
+        return self
+
+    def log_std_min(self, value):
+        self._config.log_std_min = value
+        return self
+
     def ppo_update_epochs(self, value):
         self._config.ppo_update_epochs = value
         return self
@@ -276,6 +331,10 @@ class TrainConfigBuilder:
     def seed(self, value):
         self._config.seed = value
         return self
+
+    def parallel(self, value):
+        self._config.parallel = value
+        return self
     
     # ---- PPO ----
     def total_timesteps(self, value):
@@ -314,20 +373,13 @@ class TrainConfigBuilder:
         self._config.vf_coef = value
         return self
 
-    def max_grad_norm(self, value):
-        self._config.max_grad_norm = value
-        return self
-
     def ppo_net_arch(self, value):
         self._config.ppo_net_arch = value
         return self
 
     def tensorboard_log(self, value):
         self._config.tensorboard_log = value
-        return self
-
-    def build(self):
-        return self._config 
+        return self 
     
     def eval_freq(self, value):
         self._config.eval_freq = value
@@ -340,3 +392,6 @@ class TrainConfigBuilder:
     def log_path(self, value):
         self._config.log_path = value
         return self
+
+    def build(self):
+        return self._config

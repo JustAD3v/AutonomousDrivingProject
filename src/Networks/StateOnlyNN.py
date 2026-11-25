@@ -33,11 +33,19 @@ class StateOnlyNN(nn.Module):
         maxQValues = torch.max(qvalues, dim=1).values
         return maxQValues
   
-  def getMinQ(self, states, nb_actions, device):
+  def getMinQ(self, states, nb_actions, device, subset_actions=None):
     with torch.no_grad():
-        # process all the inputs in one batch, doing only one forward call 
+        # process all the inputs in one batch, doing only one forward call
         # forward is done internally by calling self(...) because we called the method "forward"
         qvalues = self(states.to(device)) # (B, 5)
+        # with a subset of actions given (the ones an attacker can force the agent to take),
+        # for each set of 5 qvalues only keep the qvalue associated
+        # to the action from subset_actions that has the minimum value
+        if subset_actions is not None:
+            return torch.stack([
+                qvalues[row, idx].min()
+                for row, idx in enumerate(subset_actions)
+            ])
         # reduce the QValues to only the max among the 5 actions for every state => (B, 5) => (B,)
         minQValues = torch.min(qvalues, dim=1).values
         return minQValues

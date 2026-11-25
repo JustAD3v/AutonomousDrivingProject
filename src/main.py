@@ -124,8 +124,40 @@ def main():
         default=False,
         help="Launch sweep runs (experimental feature, test only)",
     )
+    parser.add_argument(
+        "--container",
+        action="store_true",
+        default=False,
+        help=(
+            "Run in container mode : the training curves are saved next to the "
+            "model file instead of being shown in a window."
+        ),
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        default=False,
+        help="Parallelize sample collection (training only)",
+    )
 
     args = parser.parse_args()
+
+    fast_env_config = {
+        "lanes_count": 4,
+        "vehicles_count": 40,
+        "duration": 30,
+        "ego_spacing": 2,
+        "vehicles_density": 1.1,
+        "collision_reward": -5,
+        "right_lane_reward": 0.0,
+        "high_speed_reward": 1.0,
+        "lane_change_reward": 0.02,
+        "reward_speed_range": [25, 40],
+        "normalize_reward": True,
+        "offroad_terminal": False,
+        "simulation_frequency": 5,
+        "policy_frequency": 1,
+    }
 
     TRAIN = args.train
     SWEEP = args.sweep
@@ -137,14 +169,20 @@ def main():
     # PPO / Default Config setup
     train_config = (
         TrainConfigBuilder()
-        .buffer_size(800)
-        .gamma(0.95)
-        .ppo_lm(0.85)
+        .buffer_size(2048)
+        .ppo_update_epochs(10)
+        .ppo_minibatch_size(64)
         .ppo_critic_update_steps(10)
         .ppo_actor_update_steps(10)
-        .iterations(40)
+        .ent_coef(0.02)
+        .max_grad_norm(0.5)
+        .gamma(0.92)
+        .ppo_lm(0.8)
         .ppo_nworkers(8)
         .learning_rate(5e-4)
+        .iterations(40)
+        .log_freq(20)
+        .env_config(fast_env_config)
         .build()
     )
 
@@ -155,6 +193,8 @@ def main():
     if args.env:
         train_config.env_name = args.env
 
+    # print(train_config.to_json(pretty=True))
+
     # overwrite seed if in args
     if args.seed:
         train_config.seed = args.seed
@@ -163,6 +203,11 @@ def main():
     if args.continuous:
         train_config.ppo_continuous = True
 
+    # set parallel option in training mode
+    if args.train:
+        train_config.parallel = args.parallel
+
+    # centralized env_config
     env_config = EnvFactory.env_config(train_config)
     env = EnvFactory.create(train_config)
 
@@ -181,19 +226,23 @@ def main():
             results = trainer.learn()
             trainer.save(NETWORK_FILE)
             if results is not None:
-                results.plot()
+                results.plot(path=f"{NETWORK_FILE}_curves.png")
 
     else:
         match MODEL_TYPE:
             case "dqn" | "wocar_dqn":
-                model = StateOnlyNN()
+                model = TrainerFactory.create_network_factory(
+                    env, train_config, MODEL_TYPE
+                ).create()
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = CustomPolicy(network=model, action_space=env.action_space)
             case "ppo" | "wocar_ppo":
                 if train_config.ppo_continuous:
                     model = ActorNetwork(out_features=env.action_space.shape[0], continuous=True)
                 else:
-                    model = ActorNetwork()
+                    model = TrainerFactory.create_network_factory(
+                        env, train_config, MODEL_TYPE
+                    ).create("actor")
                 model.load_state_dict(torch.load(NETWORK_FILE))
                 policy = PPOPolicy(network=model, action_space=env.action_space)
             case "sb3_dqn":
@@ -217,15 +266,14 @@ def main():
         if args.adversarial:
             match ATTACK_TYPE:
                 case "random":
-                    adversarial = RandomAdversarial(policy, attack_bound)
+                    adversarial = RandomAdversarial(policy, attack_bound, env)
                 case "fgsm":
-                    adversarial = FGSMAdversarial(policy, attack_bound)
+                    adversarial = FGSMAdversarial(policy, attack_bound, env)
 
         evaluator = Evaluator(policy=policy,
                             nb_episodes=100,
-                            env_name=train_config.env_name,
-                            env_config=env_config,
-                            continuous=args.continuous,
+                            env=env,
+                            continuous=train_config.ppo_continuous,
                             render_delay=render_delay,
                             render_mode=render_mode,
                             adversarial=adversarial,

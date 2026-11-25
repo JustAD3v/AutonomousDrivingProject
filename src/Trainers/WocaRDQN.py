@@ -6,6 +6,7 @@ import gymnasium as gym
 import highway_env
 import numpy as np
 
+from Adversarial.AbstractAdversarial import Adversarial
 from Trainers.TrainConfig import TrainConfig
 from Trainers.ReplayBuffer import ReplayBuffer
 from Trainers.TrainResult import TrainResult
@@ -14,13 +15,18 @@ from Utils.Timer import Timer
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
+# ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+DEBUG_BOUNDS = True
+# ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
 class WocaRDQN:
     def __init__(self, 
                  config: TrainConfig, 
                  target_network: nn.Module,
                  main_network: nn.Module, 
-                 woca_network: nn.Module, 
-                 robust_network: nn.Module, 
+                 woca_network: nn.Module,
+                 woca_target_network: nn.Module,
+                 robust_network: nn.Module,
                  policy, 
                  env_name = "highway-fast-v0",  
                  env_config = None,
@@ -38,8 +44,10 @@ class WocaRDQN:
         self.main_net = main_network
         self.target_net = target_network
         self.woca_net = woca_network
+        self.woca_target_net = woca_target_network
         self.robust_net = robust_network
         self.target_net.load_state_dict(self.main_net.state_dict())
+        self.woca_target_net.load_state_dict(self.woca_net.state_dict())
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
         self.r_buffer = ReplayBuffer(self.config.buffer_size, 
                                      config.batch_size,
@@ -50,16 +58,41 @@ class WocaRDQN:
 
         self._bounded_robust_net = None
 
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        self._debug_calls = 0
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
         # wocaR params
-        self.k_wst = config.k_wst
+        # k_wst starts at config.k_wst_start and moves towards config.k_wst
+        self.k_wst = config.k_wst_start
+        self.k_wst_step = (config.k_wst - config.k_wst_start)/(config.k_wst_frac*config.iterations)
         self.k_reg = config.k_reg
-        self.attack_budget = config.attack_budget
-        self.grad_step_size = config.wocar_grad_step_size
+        self.attack_budget = config.attack_budget_start
+        self.attack_budget_step = (config.attack_budget - config.attack_budget_start)/(config.attack_budget_frac*config.iterations)
         self.grad_steps = config.wocar_grad_steps
+        # perturbation set of the training: the same one the evaluation attacks use,
+        # a fraction of the half-range of each feature (see Adversarial.feature_scale_of)
+        # tiled over the rows of the observation to get (5,) => (25,)
+        # needed because during training we work with a flattened state : (25,) = concatenation of each row (5,)
+        self.attack_scale = torch.as_tensor(
+            np.tile(Adversarial.feature_scale_of(self.env), self.env.observation_space.shape[0]),
+            dtype=torch.float32,
+            device=self.device
+        )
 
     def epsilon_update(self, epsilon):
       return max(self.config.epsilon_min, epsilon + self.epsilon_step)
       #return max(self.config.epsilon_min, self.config.epsilon*self.config.epsilon_decay)
+
+    def k_wst_update(self, k_wst):
+      # here k_wst weighs the main qvalues and (1 - k_wst) the worst-case ones 
+      # (the convention from the paper)
+      # so it starts at k_wst_start = 1 (no worst-case) and DECREASES down to its
+      # target to give the worst-case qvalues more and more weight
+      return max(self.config.k_wst, k_wst + self.k_wst_step)
+
+    def attack_budget_update(self, attack_budget):
+      return min(self.config.attack_budget, attack_budget + self.attack_budget_step)
 
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
@@ -67,24 +100,9 @@ class WocaRDQN:
        
        torch.nn.utils.clip_grad_norm_(
          model.parameters(),
-         max_norm=10.0
+         max_norm=self.config.max_grad_norm
        )
        model.optimizer.step()
-
-    def getWocaMinQ(self, subset_actions, states):
-      with torch.no_grad():
-        # don't create a graph for qvalues either way it will bind qvalues to the graph
-        # and when the auto grad releases the tensor we can't use them anymore
-        # even though we return it (we return minQvalues which is bound to qvalues)
-        qvalues = self.woca_net(states.to(self.device)) # (B, 5)
-        # for each set of 5 qvalues only keep the qvalue associated
-        # to the action from subset_actions
-        # that has the minimum value
-        minQValues = torch.stack([
-          qvalues[row, idx].min()
-          for row, idx in enumerate(subset_actions)
-        ])
-      return minQValues
 
     def filter_actions(self, lb_q, ub_q):
       actions = []
@@ -92,24 +110,103 @@ class WocaRDQN:
           actions.append([
              # for each action i,
              i for i in range(len(lb)) 
-             # if there is an action j (i != j) with a lower bound lower than ub[i]
-             # then this action might be chosen 
-             # because its qvalue domain covers a part of the domain of another action
+             # an action might be selected 
+             # if it's upper bound is greater than ALL of the lower bounds of other actions
+             # because its qvalue domain covers a part of the domain of other POSSIBLE actions
+             # Previous error: only being greater than one of the other lower bound
+             #                is not enough because if the action considered overlaps with
+             #                an action that can't be chosen 
+             #                then the considered action can't be chosen either 
+             #                See explanation on paper, Algo 2, line 12 (https://arxiv.org/pdf/2210.05927)
              # You can think it the opposite way :
              # if all lb of other actions j are greater than ub[i],
              # this action will never be chosen because its qvalue will always be lower
              # than the one of the other actions 
-             if any([ub[i] > lb[j] for j in range(len(lb)) if j != i])  
+             if all([ub[i] > lb[j] for j in range(len(lb))])  
           ])
       return actions
     
+    # PGD variant of the subset estimation
+    # Instead of certified CROWN bounds we run one targeted attack per candidate action on
+    # robust_net from each state and collect every greedy action reached along the path:
+    # those are the actions the adversary is empirically able to force.
     def getSubsetActions(self, states):
+      states = states.detach().to(device=self.device, dtype=torch.float32)
+
+      attack = self.attack_budget * self.attack_scale
+      grad_steps = self.grad_steps
+      grad_step_size = 2 * attack / grad_steps
+
+      with torch.no_grad():
+        clean_qvalues = self.robust_net(states)
+      batch_size, n_actions = clean_qvalues.shape
+      state_indices = torch.arange(batch_size, device=self.device)
+
+      # reached[state, action] is True once the adversary managed to force that action.
+      # The clean greedy action is always reachable (delta = 0)
+      best_actions = clean_qvalues.argmax(dim=1)
+      reached = torch.zeros(batch_size, n_actions, dtype=torch.bool, device=self.device)
+      reached[state_indices, best_actions] = True
+
+      # one targeted attack per candidate action, all stacked in a single batch:
+      # block t holds the whole state batch attacked towards action t.
+      # An untargeted attack only ever explores one direction and systematically
+      # under-estimates the subset, which makes the worst-case value optimistic.
+      t_states = states.repeat(n_actions, 1)
+      targets = torch.arange(n_actions, device=self.device).repeat_interleave(batch_size)
+      t_best_actions = best_actions.repeat(n_actions)
+      # row (t * batch_size + b) holds states[b] attacked towards action t, so the state
+      # a stacked row belongs to is simply its index modulo batch_size
+      t_state_indices = state_indices.repeat(n_actions)
+
+      delta = (2.0 * torch.rand_like(t_states) - 1.0) * attack
+
+      for _ in range(grad_steps):
+        delta.requires_grad_(True)
+
+        p_qvalues = self.robust_net(t_states + delta)
+    
+        q_target = p_qvalues.gather(1, targets.unsqueeze(1)).squeeze(1)
+        q_best = p_qvalues.gather(1, t_best_actions.unsqueeze(1)).squeeze(1)
+        margin = (q_target - q_best).sum()
+
+        grad = torch.autograd.grad(margin, delta)[0]
+
+        with torch.no_grad():
+            delta = torch.clamp(
+                delta + grad_step_size * grad.sign(),
+                min=-attack,
+                max=attack
+            )
+            # record the greedy action reached at this step, for every target block
+            greedy_actions = self.robust_net(t_states + delta).argmax(dim=1)
+            reached[t_state_indices, greedy_actions] = True
+        delta = delta.detach()
+
+      subset_actions = [
+          [action for action, is_reached in enumerate(row) if is_reached]
+          for row in reached.tolist()
+      ]
+
+      # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+      if DEBUG_BOUNDS:
+        self._debug_calls += 1
+        if self._debug_calls % self.config.log_freq == 0:
+          spread = (clean_qvalues.max(dim=1).values - clean_qvalues.min(dim=1).values).mean().item()
+          subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+          print(f"[DEBUG-PGD] call={self._debug_calls} spread={spread:.4f} subset={subset:.3f}")
+      # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+      return subset_actions
+
+    def getSubsetActionsCrown(self, states):
       # get lower and upper bound of perturbated states
-      lb_states = (states - states.abs() * self.attack_budget).to(
+      attack = self.attack_budget * self.attack_scale
+      lb_states = (states - attack).to(
           device=self.device,
           dtype=torch.float32
       )
-      ub_states = (states + states.abs() * self.attack_budget).to(
+      ub_states = (states + attack).to(
           device=self.device,
           dtype=torch.float32
       )
@@ -121,6 +218,7 @@ class WocaRDQN:
               self.robust_net,
               torch.empty_like(states)
           )
+          
       # Compute bounds using LiRPA using the given lower and upper bounds.
       norm = float("inf")
       ptb = PerturbationLpNorm(norm=norm, x_L=lb_states, x_U=ub_states)
@@ -132,9 +230,34 @@ class WocaRDQN:
       )
       # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
       # filter actions
-      return self.filter_actions(lb_qvalues, ub_qvalues)
+      subset_actions = self.filter_actions(lb_qvalues, ub_qvalues)
 
-    def getDistMax(self, states, grad_step_size,grad_steps):
+      # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+      if DEBUG_BOUNDS:
+        self._debug_bounds(states, lb_qvalues, ub_qvalues, subset_actions)
+      # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+      return subset_actions
+
+    # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+    # width  : mean CROWN interval width, how blurry the perturbed qvalues are
+    # spread : mean (max - min) of the clean qvalues, how far apart the actions are
+    # an action is pruned only if its gap to the best one exceeds width, so the
+    # subset stays stuck at 5 as long as spread < width (ratio < 1)
+    def _debug_bounds(self, states, lb_qvalues, ub_qvalues, subset_actions):
+      self._debug_calls += 1
+      if self._debug_calls % self.config.log_freq:
+        return
+      with torch.no_grad():
+        qvalues = self.robust_net(states)
+      width = (ub_qvalues - lb_qvalues).mean().item()
+      spread = (qvalues.max(dim=1).values - qvalues.min(dim=1).values).mean().item()
+      subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+      print(f"[DEBUG] call={self._debug_calls} width={width:.4f} spread={spread:.4f} "
+            f"ratio={spread / max(width, 1e-12):.3f} subset={subset:.3f}")
+    # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+    def getDistMax(self, states,grad_steps):
       # detach states to not change the computational graph on it
       states = states.detach()
     
@@ -144,10 +267,14 @@ class WocaRDQN:
         # and at the end it will release the tensors used
         # so next use of probs in the loop after will cause errors (reuse of released tensors)
         qvalues = self.robust_net(states)
-        probs = F.log_softmax(qvalues, dim=1)
+        probs = F.log_softmax(qvalues, dim=1) # size (B, 5)
 
-      # init delta with random pertubration in [-attack; attack], element-wise
-      attack = self.attack_budget * states.abs()
+      # init delta with random perturbation in [-attack; attack], element-wise
+      attack = self.attack_budget * self.attack_scale
+      # use an attack-relative grad step 
+      # so after all the steps the total perturbation 
+      # gets a chance of testing the whole attack space (|[-attack;attack]| = 2*attack) 
+      grad_step_size = 2 * attack / grad_steps
       # rescale the uniform sample from [0, 1] to [-1, 1]
       delta = (2.0 * torch.rand_like(states) - 1.0) * attack
 
@@ -161,11 +288,12 @@ class WocaRDQN:
         # operations recorded in the graph
         p_states = states + delta
         p_qvalues = self.robust_net(p_states)
-        p_probs = F.log_softmax(p_qvalues, dim=1)
+        p_probs = F.log_softmax(p_qvalues, dim=1) # size (B, 5)
 
         dist = F.kl_div(
             p_probs,
             probs,
+            # we reduce to batchmean to have a single scalar value to compute the gradient
             reduction="batchmean",
             # this indicates that the target param (probs.log()) is passed in the log space
             # it is recommended for soft_max log output in the documentation :
@@ -179,7 +307,7 @@ class WocaRDQN:
         with torch.no_grad():
             # don't include those calculations in the comutational graph
             delta = torch.clamp(
-                delta + grad_step_size * grad,
+                delta + grad_step_size * grad.sign(),
                 min=-attack,
                 max=attack
             )
@@ -196,11 +324,20 @@ class WocaRDQN:
       final_dist = F.kl_div(
         p_probs,
         probs,
-        reduction="batchmean",
+        # for the final distance WE DON'T REDUCE
+        # we need to keep a vector
+        # to then multiply element wise with the state weights
+        # and compute the mean over that weighted sum
+        # See paper Lreg calculation (https://arxiv.org/pdf/2210.05927) 
+        reduction="none",
         log_target=True
       )
-      
-      return final_dist
+
+      # We still have to reduce because final_dist returns (B, 5) (dist elem wise on logits)
+      # but we need (B,) to multiply element wise 
+      # with state weights vector (B,)
+      # So we sum on each element dist to get max dist per row
+      return final_dist.sum(dim=1)
 
     def getStateWeight(self, states):
       # use main_net to calculate the state weight as the paper says
@@ -208,13 +345,63 @@ class WocaRDQN:
       min_qvalues = self.main_net.getMinQ(states, self.env.action_space.n, self.device)
       return torch.sub(max_qvalues, min_qvalues)
     
-    def calcRegularization(self, states, grad_step_size, grad_steps):
+    def calcRegularizationKL(self, states, grad_steps):
       with torch.no_grad():
         # w(s) does not need to be part of the graph for backprop
-        # It can be treated as a constant 
+        # It can be treated as a constant
         w_states = self.getStateWeight(states)
-      max_dist = self.getDistMax(states, grad_step_size, grad_steps)
-      reg = torch.mul(w_states, max_dist)
+      max_dists = self.getDistMax(states, grad_steps)
+      reg = torch.mul(w_states, max_dists)
+      return reg.mean()
+
+    # PGD attack maximizing the margin (i.e the distance between the best qvalue and the second best one)
+    # margin(s) = max_{a != a*} Q(s,a) - Q(s,a*)
+    def getAdvMargin(self, states, grad_steps):
+      states = states.detach()
+
+      with torch.no_grad():
+        clean_qvalues = self.robust_net(states)
+        best_actions = clean_qvalues.argmax(dim=1)
+      best_mask = F.one_hot(best_actions, clean_qvalues.shape[1]).bool()
+
+      attack = self.attack_budget * self.attack_scale
+      grad_step_size = 2 * attack / grad_steps
+      delta = (2.0 * torch.rand_like(states) - 1.0) * attack
+
+      def margin_of(qvalues):
+        q_best = qvalues.gather(1, best_actions.unsqueeze(1)).squeeze(1)
+        q_other = qvalues.masked_fill(best_mask, float("-inf")).max(dim=1).values
+        return q_other - q_best
+
+      # find the perturbation that maximizes the margin, by gradient ascent
+      for _ in range(grad_steps):
+        delta.requires_grad_(True)
+
+        p_qvalues = self.robust_net(states + delta)
+        margin = margin_of(p_qvalues).sum()
+
+        grad = torch.autograd.grad(margin, delta)[0]
+
+        with torch.no_grad():
+            delta = torch.clamp(
+                delta + grad_step_size * grad.sign(),
+                min=-attack,
+                max=attack
+            )
+        delta = delta.detach()
+
+      # recompute outside of the loop, on a fresh graph the robust_net optimization can use
+      final_margin = margin_of(self.robust_net(states + delta))
+      # we clamp the margin to avoid widening the margin too much 
+      return torch.clamp(final_margin, min=-self.config.wocar_hinge_c)
+
+    def calcRegularization(self, states, grad_steps):
+      with torch.no_grad():
+        # w(s) does not need to be part of the graph for backprop
+        # It can be treated as a constant
+        w_states = self.getStateWeight(states)
+      adv_margins = self.getAdvMargin(states, grad_steps)
+      reg = torch.mul(w_states, adv_margins)
       return reg.mean()
 
     @Timer.measure("Prediction calculation")
@@ -233,14 +420,14 @@ class WocaRDQN:
         # rewards, dones and qvalues should all be on same device
         y_target = rewards + self.config.gamma * qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
         # calc y_main using MAIN NETWORK (network of the agent)
-        y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device) 
+        y_main = self.main_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
         # calc loss
         loss = self.main_net.loss_fn(y_main.squeeze(), y_target)
         loss_value = loss.item()
         # optimize
         self.optimize_model(loss, self.main_net)
 
-        return qvalues, loss_value
+        return loss_value
 
     @Timer.measure("Warmup duration")
     def _warmup(self):
@@ -268,22 +455,35 @@ class WocaRDQN:
 
     @Timer.measure("WOCA network update")
     def _train_woca_network(self, states, actions, rewards, next_states, dones):
+              # the actions an attacker can force the agent to take from next_states
               subset_actions = self.getSubsetActions(next_states)
+              # calc y_woca_target for every sample of batch using WOCA TARGET NETWORK
+              # same as the main network, with the min over the attacker actions
+              # instead of the max over all the actions
               with torch.no_grad():
                 # no need to build a graph for calculating target
                 # (no backprop is computed)
-                woca_qvalues = self.getWocaMinQ(subset_actions, next_states)
-                y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones)
+                woca_qvalues = self.woca_target_net.getMinQ(next_states, self.env.action_space.n, self.device, subset_actions)
 
-              y_woca_predicted = self.woca_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
-              woca_loss = self.woca_net.loss_fn(y_woca_predicted.squeeze(), y_woca_target)
+              y_woca_target = rewards + self.config.gamma * woca_qvalues * (1-dones) # only add the estimated next_state qvalue if there is a next state (= not done)
+              # calc y_woca using WOCA NETWORK
+              y_woca = self.woca_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
+              # calc loss
+              woca_loss = self.woca_net.loss_fn(y_woca.squeeze(), y_woca_target)
+              # optimize
               self.optimize_model(woca_loss, self.woca_net)
 
     @Timer.measure("Robust network update")
-    def _train_robust_network(self, states, actions, rewards, next_states, dones, qvalues, reg_loss):
-              q_target = qvalues
-              q_woca = self.woca_net.getMaxQ(next_states, self.env.action_space.n, self.device)
-              y_robust = rewards + self.config.gamma * (self.k_wst * q_target + (1 - self.k_wst) * q_woca) * (1-dones)
+    def _train_robust_network(self, states, actions, rewards, next_states, dones, reg_loss):
+              # max_q_sum calculates the maximum of the sum of the qvalues from main network and woca network
+              # see paper page 20, Algo 2, line 17 (https://arxiv.org/pdf/2210.05927) 
+              # we have to take the max over the sum
+              # and not the sum of the max (previous error)
+              with torch.no_grad():
+                q_target = self.target_net(next_states)
+                q_woca = self.woca_target_net(next_states)
+              max_q_sum = (self.k_wst * q_target + (1 - self.k_wst) * q_woca).max(dim=1).values
+              y_robust = rewards + self.config.gamma * max_q_sum * (1-dones)
               predicted_robust = self.robust_net.get_qvalues((states, actions, rewards, next_states, dones), self.device)
               robust_loss = self.robust_net.loss_fn(predicted_robust.squeeze(), y_robust) + self.k_reg * reg_loss
               self.optimize_model(robust_loss, self.robust_net)
@@ -318,24 +518,27 @@ class WocaRDQN:
               # uniform draw of a batch
               states, actions, rewards, next_states, dones = self.r_buffer.get_batch()
               # calc y_target for every sample of batch using TARGET NETWORK
-              qvalues, loss_value = self._train_main_network(states, actions, rewards, next_states, dones)
+              loss_value = self._train_main_network(states, actions, rewards, next_states, dones)
               total_loss += loss_value
 
               # ============ TRAIN WOCA NETWORK ============
               self._train_woca_network(states, actions, rewards, next_states, dones)
 
               # ============ CALCULATE REGULARIZATION ============ 
-              reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
+              reg_loss = self.calcRegularization(states, self.grad_steps)
 
               # ============ TRAIN ROBUST NETWORK ============ 
-              self._train_robust_network(states, actions, rewards, next_states, dones, qvalues, reg_loss)
+              self._train_robust_network(states, actions, rewards, next_states, dones, reg_loss)
 
             if iteration % self.config.copy_freq == 0:
               self.target_net.load_state_dict(self.main_net.state_dict())
-              print("[!!] Weights of Target Network updated !")
+              self.woca_target_net.load_state_dict(self.woca_net.state_dict())
+              print("[!!] Weights of Target Networks updated !")
             iteration += 1
             state = new_state
-            self.config.epsilon = self.epsilon_update(self.config.epsilon)        
+            self.config.epsilon = self.epsilon_update(self.config.epsilon)
+            self.k_wst = self.k_wst_update(self.k_wst)
+            self.attack_budget = self.attack_budget_update(self.attack_budget)
           
           self.record.add_episode(nb_steps,
                                   episode_return,
@@ -357,19 +560,6 @@ class WocaRDQN:
 
         print(f"[+] Total duration (warmup + training) = {warmup_duration + training_duration}s")
 
-        print(f"[+] Environment processing duration : = {self.timer.counters['Environment processing']}s")
-        print(f"[+] Network processing duration : = {self.timer.counters['Network processing']}s")
-        print(f"[+] Prediction calculation duration : = {self.timer.counters['Prediction calculation']}s")
-
-        print("[+] === Detailed timing breakdown ===")
-        for name, elapsed in self.timer.counters.items():
-            if name not in (
-                "Warmup duration",
-                "Training duration",
-                "Environment processing",
-                "Network processing",
-                "Prediction calculation"
-            ):
-                print(f"{name}: {elapsed:.3f}s")
+        self.timer.report()
 
         return self.record

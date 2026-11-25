@@ -80,6 +80,7 @@ class PPOBuffer:
             dtype=torch.float32,
             device=self.device
         )
+        # normalized advantages (Z-scoring)
         advantages = (self.advantage_buffer - self.advantage_buffer.mean()) / (self.advantage_buffer.std() + 1e-8)
         returns = self.return_buffer 
 
@@ -91,9 +92,22 @@ class PPOBuffer:
             torch.tensor(returns, dtype=torch.float32).to(self.device)
         )
 
-    def get_batch(self, minibatch_size=1):
+    def get_batch(self, minibatch_size=None):
         assert self.ptr == self.buffer_size
         result = self.batch_tensors()
+
+        # no minibatch size given: train on the whole buffer at once
+        if minibatch_size is None:
+            minibatch_size = self.buffer_size
+
+        # the buffer is filled in time order (and per worker when merged), so a plain
+        # split would build minibatches of consecutive, strongly correlated transitions.
+        # shuffle the rows first, like the uniform draw done in ReplayBuffer.get_batch,
+        # but without replacement so every transition is used exactly once per pass.
+        indices = torch.from_numpy(
+            np.random.permutation(self.buffer_size)
+        ).to(self.device)
+        result = [tensor[indices] for tensor in result]
 
         # split_tensors = [
         # (states_split, ...), 

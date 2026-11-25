@@ -13,4 +13,8 @@ tb_logs/
 .env/
 *.zip
 logs/
+
+# Scenario test run artifacts (the configs in tests/configs/ stay tracked)
+tests/models/
 tests/results/
+*_curves.png

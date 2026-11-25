@@ -1,6 +1,7 @@
 from Trainers.TrainerWrapper import TrainerWrapper
 import random
 import sys
+import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
@@ -25,9 +26,41 @@ class TrainerFactory:
                 "woca": WocaPPONN if config.ppo_continuous else StateOnlyNN
             }
             configs = {
-                "actor": {"out_features": env.action_space.shape[0], "continuous": True}
-            } if config.ppo_continuous else None
+                "actor": {"learning_rate": config.learning_rate},
+                "critic": {"learning_rate": config.learning_rate},
+                "woca": {"learning_rate": config.learning_rate},
+            }
+            if config.ppo_continuous:
+                action_size = env.action_space.shape[0]
+                configs["actor"].update({
+                    "out_features": action_size,
+                    "continuous": True,
+                    "log_std_min": config.log_std_min
+                })
+                # the worst-case Q network takes the state and the action as input
+                configs["woca"].update({"in_features": int(np.prod(env.observation_space.shape)) + action_size})
+            else:
+                # Match the observation size and discrete action count
+                observation_size = int(np.prod(env.observation_space.shape))
+                action_count = env.action_space.n
+                configs["actor"]["in_features"] = observation_size
+                configs["actor"]["out_features"] = action_count
+                configs["critic"]["in_features"] = observation_size
+                configs["critic"]["out_features"] = 1
+                configs["woca"]["in_features"] = observation_size
+                configs["woca"]["out_features"] = action_count
             return NetworkFactory(train_config=config, network_types=network_types, configs=configs)
+
+        if trainer_type in ("dqn", "wocar_dqn"):
+            return NetworkFactory(
+                train_config=config,
+                network_types=StateOnlyNN,
+                configs={"default": {
+                    "learning_rate": config.learning_rate,
+                    "in_features": int(np.prod(env.observation_space.shape)),
+                    "out_features": env.action_space.n,
+                }},
+            )
 
         return NetworkFactory(train_config=config, network_types=StateOnlyNN)
 
@@ -88,6 +121,14 @@ class TrainerFactory:
                 target_network = network_factory.create()
                 main_network = network_factory.create()
                 woca_network = network_factory.create()
+                woca_target_network = network_factory.create()
+
+                if config.pretrained_net is not None:
+                    import torch
+                    weights = torch.load(config.pretrained_net)
+                    for network in (robust_network, target_network, main_network):
+                        network.load_state_dict(weights)
+                    print(f"[+] WocaR networks warm started from : {config.pretrained_net}")
 
                 policy = CustomPolicy(network=robust_network, action_space=env.action_space)
 
@@ -96,6 +137,7 @@ class TrainerFactory:
                     target_network=target_network,
                     main_network=main_network,
                     woca_network=woca_network,
+                    woca_target_network=woca_target_network,
                     robust_network=robust_network,
                     policy=policy,
                     env=env
@@ -153,7 +195,7 @@ class TrainerFactory:
                     actor_network=actor_network,
                     critic_network=critic_network,
                     policy=policy,
-                    env=env
+                    env=env,
                 )
                 return TrainerWrapper(trainer=trainer, trainer_type=trainer_type, config=config, seed=seed)
             
@@ -164,6 +206,14 @@ class TrainerFactory:
                 actor_network = network_factory.create("actor")
                 critic_network = network_factory.create("critic")
                 woca_network = network_factory.create("woca")
+
+                if config.pretrained_net is not None or config.pretrained_critic_net is not None:
+                    import torch
+                    if config.pretrained_net is not None:
+                        actor_network.load_state_dict(torch.load(config.pretrained_net))
+                    if config.pretrained_critic_net is not None:
+                        critic_network.load_state_dict(torch.load(config.pretrained_critic_net))
+                    print(f"[+] WocaR-PPO networks warm started from : {config.pretrained_net} / {config.pretrained_critic_net}")
 
                 policy = PPOPolicy(network=actor_network, action_space=env.action_space)
 

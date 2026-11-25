@@ -11,11 +11,32 @@ from Trainers.PPOBuffer import PPOBuffer
 from Trainers.TrainResult import TrainResult
 from Utils.Timer import Timer
 
-PARALLEL = True
+_worker_env = None
 
-def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
-    env = gym.make(env_name, config=env_config)
-    state, _ = env.reset()
+def init_collector_worker():
+    # Workers only run single-state inference
+    # by default pytorch creates multithreads to run calculations
+    # and divide the work
+    # but here the work down is too small so the thread spawning overhead
+    # is bigger than its benefit
+    # so restrict it to only one thread
+    torch.set_num_threads(1)
+
+def get_worker_env(env_name, env_config):
+    # Workers are reused across iterations, so the env is built once per process
+    # so cache the env to not create it at every call
+    global _worker_env
+    if _worker_env is None:
+        _worker_env = gym.make(env_name, config=env_config)
+    return _worker_env
+
+def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm, seed=None):
+    env = get_worker_env(env_name, env_config)
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+    # seeding the reset is enough, the following resets continue the same random stream
+    state, _ = env.reset(seed=seed)
     buffer = PPOBuffer(buffer_size, device, gamma, ppo_lm)
     for _ in range(buffer_size):
         action, log_action_prob = policy.predict(state, device=device)
@@ -72,6 +93,7 @@ class PPOTrainer:
                  env_config = None,
                  env = None,
                  use_gpu = False):
+        
         self.timer = Timer()
 
         if env is not None:
@@ -97,6 +119,10 @@ class PPOTrainer:
                                 self.config.ppo_lm)
         self.record = TrainResult(self.config.iterations, self.config.log_freq, name="PPO training", config=self.config, timer=self.timer)
 
+        # created on the first parallel collection and kept for the whole training
+        self.executor = None
+        self.nworkers = 1
+
     @Timer.measure("Optimization duration")
     def optimize_model(self, loss, model):
        model.optimizer.zero_grad()
@@ -104,7 +130,7 @@ class PPOTrainer:
        
        torch.nn.utils.clip_grad_norm_(
          model.parameters(),
-         max_norm=10.0
+         max_norm=self.config.max_grad_norm
        )
        model.optimizer.step()
 
@@ -118,6 +144,12 @@ class PPOTrainer:
                 return nworkers
         return 1
 
+    def worker_seed(self, iteration, worker):
+        if self.config.seed is None:
+            return None
+        # a distinct seed per worker and per iteration, so workers don't collect the same rollout
+        return self.config.seed + iteration * self.nworkers + worker
+
     @Timer.measure("Prediction calculation")
     def _predict(self, state):
         return self.policy.predict(state, device=self.device)
@@ -126,90 +158,98 @@ class PPOTrainer:
     def _environment_step(self, action):
         return self.env.step(self.policy.to_env_action(action))
     
+    @Timer.measure("Sample collection")
+    def _collect_samples(self, parallel, iteration):
+        if parallel:
+            if self.executor is None:
+                print("using parallel !")
+                self.nworkers = self.rounded_nworkers()
+                self.executor = ProcessPoolExecutor(max_workers=self.nworkers,
+                                                    initializer=init_collector_worker)
+            buff_size = self.config.buffer_size // self.nworkers
+            # the networks are serialized on every submit, so workers always
+            # collect with the current parameters
+            futures = [self.executor.submit(collector_worker,
+                                     self.env_name,
+                                     self.env_config,
+                                     buff_size,
+                                     self.policy,
+                                     self.device,
+                                     self.critic_network,
+                                     self.config.gamma,
+                                     self.config.ppo_lm,
+                                     self.worker_seed(iteration, worker))
+                        for worker in range(self.nworkers)
+                    ]
+            res = [f.result() for f in futures]
+            self.buffer.merge(res)
+        else:
+            state, _ = self.env.reset(seed=self.worker_seed(iteration, 0))
+
+            for _ in range(self.config.buffer_size):
+                # ========= SAMPLE COLLECTION =============
+                action, log_action_prob = self._predict(state)
+                next_state, reward, term, trunc, _ = self._environment_step(action)
+                state_flat = np.asarray(state, dtype=np.float32).flatten()
+                with torch.no_grad():
+                    state_tensor = torch.as_tensor(
+                        state_flat,
+                        dtype=torch.float32,
+                        device=self.device
+                    )
+                    critic_value = self.critic_network(state_tensor).item()
+
+                # Store a detached scalar old log probability.
+                if torch.is_tensor(log_action_prob):
+                    log_action_prob = log_action_prob.detach().item()
+                
+                self.buffer.push((
+                    state_flat,
+                    action,
+                    reward,
+                    log_action_prob,
+                    critic_value
+                ))
+
+                end = term | trunc | self.buffer.full
+                if end:
+                    if term:
+                        extra_critic_value = 0.0
+                    else:
+                        next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
+                        with torch.no_grad():
+                            next_state_tensor = torch.as_tensor(
+                                next_state_array,
+                                dtype=torch.float32,
+                                device=self.device
+                            )
+                            extra_critic_value = self.critic_network(next_state_tensor).item()
+    
+                    self.buffer.finish_episode(extra_critic_value)
+                    
+                    # Reset the environment only if the episode ended.
+                    if term or trunc:
+                        state, _ = self.env.reset()
+                    else:
+                        # The buffer is full, but the episode may continue.
+                        state = next_state
+                else:
+                    state = next_state
+
     @Timer.measure("Training duration")
     def _train(self):
         print("[+] === Training starts ===")
         iteration = 0
 
         while iteration < self.config.iterations:
-            
-            if PARALLEL:
-                print("using parallel !")
-                nworkers = self.rounded_nworkers()
-                buff_size = self.config.buffer_size // nworkers
-                with ProcessPoolExecutor(max_workers=nworkers) as executor:
-                    futures = [executor.submit(collector_worker, 
-                                             self.env_name, 
-                                             self.env_config, 
-                                             buff_size, 
-                                             self.policy, 
-                                             self.device, 
-                                             self.critic_network, 
-                                             self.config.gamma, 
-                                             self.config.ppo_lm)
-                                for _ in range(nworkers)
-                            ]
-                    res = [f.result() for f in futures]
-                    self.buffer.merge(res)
-            else:
-                state, _ = self.env.reset()
-
-                for _ in range(self.config.buffer_size):
-                    # ========= SAMPLE COLLECTION =============
-                    action, log_action_prob = self._predict(state)
-                    next_state, reward, term, trunc, _ = self._environment_step(action)
-
-                    state_flat = np.asarray(state, dtype=np.float32).flatten()
-                    with torch.no_grad():
-                        state_tensor = torch.as_tensor(
-                            state_flat,
-                            dtype=torch.float32,
-                            device=self.device
-                        )
-                        critic_value = self.critic_network(state_tensor).item()
-
-                    # Store a detached scalar old log probability.
-                    if torch.is_tensor(log_action_prob):
-                        log_action_prob = log_action_prob.detach().item()
-
-                    self.buffer.push((
-                        state_flat,
-                        action,
-                        reward,
-                        log_action_prob,
-                        critic_value
-                    ))
-
-                    end = term | trunc | self.buffer.full
-                    if end:
-                        if term:
-                            extra_critic_value = 0.0
-                        else:
-                            next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
-                            with torch.no_grad():
-                                next_state_tensor = torch.as_tensor(
-                                    next_state_array,
-                                    dtype=torch.float32,
-                                    device=self.device
-                                )
-                                extra_critic_value = self.critic_network(next_state_tensor).item()
-        
-                        self.buffer.finish_episode(extra_critic_value)
-
-                        # Reset the environment only if the episode ended.
-                        if term or trunc:
-                            state, _ = self.env.reset()
-                        else:
-                            # The buffer is full, but the episode may continue.
-                            state = next_state
-                    else:
-                        state = next_state
-
+            # ============ COLLECT SAMPLES INTO BATCHES =========
+            self._collect_samples(self.config.parallel, iteration)
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
-
+            
             # ============ GET BATCH =====================
-            minibatches = self.buffer.get_batch()
             for _ in range(self.config.ppo_update_epochs):
+                # reshuffled on every epoch so the same partition is not reused
+                minibatches = self.buffer.get_batch(self.config.ppo_minibatch_size)
                 for minibatch in minibatches:
                     states, actions, old_log_probs, advantages, returns = minibatch
                     states = states.float()
@@ -227,6 +267,7 @@ class PPOTrainer:
 
                 # ============ OPTIMIZE ACTOR =================
                     distribution = self.actor_network.distribution(states)
+                    entropy = distribution.entropy()
                     current_log_probs = distribution.log_prob(actions)
 
                     ratio = torch.exp(current_log_probs - old_log_probs)
@@ -241,6 +282,11 @@ class PPOTrainer:
                     clipped_objective = clipped_ratio * advantages
 
                     loss = -torch.minimum(unclipped_objective,clipped_objective).mean()
+
+                    # add entropy to favor exploration
+                    entropyloss = -torch.mean(entropy)
+                    loss += self.config.ent_coef * entropyloss
+                    
                     self.optimize_model(loss, self.actor_network)
             
             self.buffer.reset()
@@ -249,7 +295,12 @@ class PPOTrainer:
     
     def learn(self) -> TrainResult:
         self.timer.reset()
-        self._train()
+        try:
+            self._train()
+        finally:
+            if self.executor is not None:
+                self.executor.shutdown(wait=True)
+                self.executor = None
         self.record.report_final()
         self.timer.report()
         return self.record

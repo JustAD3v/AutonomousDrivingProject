@@ -22,9 +22,6 @@ class TrainerWrapper:      #did we remove callback=None by accident?
                 #It gave errior when having parameter for this function so i removed it, maybe readd idk i could misundertand something. Dont know what happened
             #case "ppo":
                 #self.trainer.learn(total_timesteps=self.config.total_timesteps)
-            case "ppo":
-                self.trainer.learn()
-                return None
             case _:
                 return self.trainer.learn()
 
@@ -41,6 +38,9 @@ class TrainerWrapper:      #did we remove callback=None by accident?
             case _:
                 self.trainer.save(path)
         print(f"[+] Target network saved to file : {path}")
+        if self.trainer_type in ("ppo", "wocar_ppo"):
+            torch.save(self.trainer.critic_network.state_dict(), f"{path}_critic")
+            print(f"[+] Critic network saved to file : {path}_critic")
 
 
     def predict(self, state, deterministic=True):
@@ -48,7 +48,7 @@ class TrainerWrapper:      #did we remove callback=None by accident?
             case "sb3_dqn" | "sb3-ppo":
                 return self.trainer.predict(state, deterministic=deterministic)
             case "ppo" | "wocar_ppo":
-                action, _ = self.trainer.policy.predict(state)
+                action, _ = self.trainer.policy.predict(state, deterministic=deterministic)
                 return self.trainer.policy.to_env_action(action)
             case _:
                 return self.trainer.policy.predict(state, epsilon=0.0)
