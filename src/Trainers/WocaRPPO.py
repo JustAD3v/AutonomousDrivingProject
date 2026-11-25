@@ -220,6 +220,9 @@ class WocaRPPO:
         # budget would not be comparable to the one the evaluation attacks apply
         attack = self.attack_budget * self.attack_scale
 
+        # attack-relative grad step
+        pgd_step_size = 2 * attack / grad_steps
+
         if self.config.ppo_continuous:
             with torch.no_grad():
                 # kl_divergence only supports calculation between Normal objects
@@ -241,7 +244,7 @@ class WocaRPPO:
                 dist = torch.distributions.kl_divergence(clean_base, p_base).sum(dim=-1).mean()
                 grad = torch.autograd.grad(dist, delta)[0]
                 with torch.no_grad():
-                    delta = torch.clamp(delta + grad_step_size * grad, min=-attack, max=attack)
+                    delta = torch.clamp(delta + pgd_step_size * grad.sign(), min=-attack, max=attack)
                 delta = delta.detach()
 
             # recompute on a fresh graph so the actor can backprop through it
@@ -259,9 +262,6 @@ class WocaRPPO:
 
         # rescale the uniform sample from [0, 1] to [-1, 1]
         delta = (2.0 * torch.rand_like(states) - 1.0) * attack
-
-        # attack-relative grad step
-        pgd_step_size = 2 * attack / grad_steps
 
         # find perturbation delta that maximizes the distance using gradient ascent
         dist = None
