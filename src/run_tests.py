@@ -196,10 +196,11 @@ def train_scenario_result(name, skip_train):
     }
 
 
-def evaluate_all(results, episodes, workers):
+def evaluate_all(results, episodes, workers, kept_filter):
     tasks = [(scenario_result["scenario"], variant["name"])
              for scenario_result in results if "error" not in scenario_result
-             for variant in SCENARIOS[scenario_result["scenario"]]["evals"]]
+             for variant in SCENARIOS[scenario_result["scenario"]]["evals"]
+             if kept_filter is None or variant["name"] in kept_filter]
     if not tasks:
         return
     by_name = {scenario_result["scenario"]: scenario_result for scenario_result in results}
@@ -259,6 +260,8 @@ def main():
     )
     parser.add_argument("--only", nargs="+", metavar="NAME", choices=list(SCENARIOS),
                         help="Run only these scenarios (default: all)")
+    parser.add_argument("--only-attack", nargs="+", metavar="NAME", choices=None,
+                        help="Run only these attack types (default: all)")
     parser.add_argument("--exclude", nargs="+", metavar="NAME", choices=list(SCENARIOS), default=[],
                         help="Skip these scenarios")
     parser.add_argument("--list", action="store_true", help="List the scenarios and exit")
@@ -289,7 +292,7 @@ def main():
     started = time.perf_counter()
     results = [train_scenario_result(name, args.skip_train) for name in selected]
     print(f"[+] Training done, evaluating {args.episodes} episodes per variant")
-    evaluate_all(results, args.episodes, args.workers)
+    evaluate_all(results, args.episodes, args.workers, args.only_attack)
     print(f"[+] Total duration = {time.perf_counter() - started:.1f}s")
 
     report(results)
