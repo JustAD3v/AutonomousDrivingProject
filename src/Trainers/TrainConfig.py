@@ -57,8 +57,8 @@ class TrainConfig:
         self.best_model_save_path = "./logs/"
         self.log_path = "./logs/"
 
-    def to_json(self):
-        return json.dumps(self.__dict__)
+    def to_json(self, pretty=False):
+        return json.dumps(self.__dict__, indent=4 if pretty else None)            
 
     def from_json(self, value):
         self.__dict__.update(json.loads(value))
