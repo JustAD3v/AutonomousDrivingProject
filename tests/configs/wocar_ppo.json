@@ -14,7 +14,7 @@
             25,
             40
         ],
-        "normalize_reward": false,
+        "normalize_reward": true,
         "simulation_frequency": 5,
         "policy_frequency": 1
     },
@@ -22,7 +22,7 @@
     "parallel": true,
     "gamma": 0.95,
     "buffer_size": 2048,
-    "iterations": 200,
+    "iterations": 50,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
     "ent_coef": 0.02,

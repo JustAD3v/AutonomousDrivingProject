@@ -680,8 +680,27 @@ class WocaRPPO:
 
         self.optimize_model(woca_loss, self.woca_network)
 
+    @Timer.measure("WOCA advantage calculation")
+    def _woca_advantage(self, states, actions):
+        with torch.no_grad():
+            if self.config.ppo_continuous:
+                woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
+                return woca_qvalues - woca_qvalues.mean()
+            qvalues = self.woca_network(states)
+            # Q_wst is a value, not an advantage. 
+            # So it contains a baseline value + some info about that action
+            # basically : A = Q - V => Q = A + V
+            # to keep distribution Q but recenter it around A 
+            # so it has the scale of an Advantage
+            # we calculate the WEIGHTED SUM FOLLOWING the distribution
+            # (a flat .mean() would loose the information on the difference between states)
+            # and substract it to the value so we keep only the meaningful part of each qvalue
+            probs = self.robust_actor_network.distribution(states).probs
+            baseline = (probs * qvalues).sum(dim=1)
+            return qvalues.gather(1, actions.unsqueeze(1)).squeeze(1) - baseline
+
     @Timer.measure("Robust actor network update")
-    def _train_robust_actor_network(self, states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss):
+    def _train_robust_actor_network(self, states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss, woca_advantage):
         distribution = self.robust_actor_network.distribution(states)
         entropy = distribution.entropy()
         current_log_probs = distribution.log_prob(actions)
@@ -694,16 +713,7 @@ class WocaRPPO:
             1.0 + self.clip_epsilon
         )
         
-        with torch.no_grad():
-            if self.config.ppo_continuous:
-                woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
-            else:
-                woca_qvalues = self.woca_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-            # Q_wst is a value, not an advantage: its batch mean is large and positive
-            # so need to be normalized to not override the action of the advantages
-            # especially because advantages are also normalized 
-            woca_qvalues = (woca_qvalues - woca_qvalues.mean()) / (woca_qvalues.std(unbiased=False) + 1e-8)
-        woca_advantages = advantages + self.k_wst * woca_qvalues
+        woca_advantages = advantages + self.k_wst * woca_advantage
         unclipped_objective = ratio * woca_advantages
         clipped_objective = clipped_ratio * woca_advantages
 
@@ -725,7 +735,8 @@ class WocaRPPO:
                             reg_term=reg_term.item(),
                             entropy_term=entropy_term.item(),
                             adv_std=advantages.std().item(),
-                            qwst_std=woca_qvalues.std().item(),
+                            qwst_mean=woca_advantage.mean().item(),
+                            qwst_std=woca_advantage.std().item(),
                             wadv_std=woca_advantages.std().item(),
                             ratio_mean=ratio.mean().item(),
                             k_wst=self.k_wst)
@@ -855,8 +866,19 @@ class WocaRPPO:
                     states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
                     self._train_woca_network(states, actions, rewards, next_states, dones, y_woca_target)
 
+            # Q_wst are qvalues not advantages. Overmore advantages are normalized
+            # So Q_wst must be "normalized"/rescaled before added to the advantages
+            # For that we recenter the qvalues by substracting the basleine value (see _woca_advantages)
+            # then we rescale by dividing by the std over the whole buffer as done with advantages
+            woca_advantages = []
+            for minibatch in minibatches:
+                states, actions, _, _, _, _, _, _ = self._cast_minibatch(minibatch)
+                woca_advantages.append(self._woca_advantage(states, actions))
+            woca_adv_scale = torch.cat(woca_advantages).std() + 1e-8
+            woca_advantages = [advantage/woca_adv_scale for advantage in woca_advantages]
+
             for _ in range(self.config.ppo_update_epochs):
-                for minibatch in minibatches:
+                for minibatch, woca_advantage in zip(minibatches, woca_advantages):
                     states, actions, old_log_probs, advantages, returns, rewards, next_states, dones = self._cast_minibatch(minibatch)
 
                 # ============ OPTIMIZE CRITIC ===============
@@ -866,7 +888,7 @@ class WocaRPPO:
                     reg_loss = self.calcRegularization(states, self.grad_step_size, self.grad_steps)
 
                 # ============ OPTIMIZE ROBUST ACTOR =================
-                    self._train_robust_actor_network(states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss)
+                    self._train_robust_actor_network(states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss, woca_advantage)
 
             self.buffer.reset()
             iteration += 1
