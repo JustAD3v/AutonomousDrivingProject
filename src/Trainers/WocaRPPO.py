@@ -43,7 +43,6 @@ def collector_worker(env_name, env_config, buffer_size, policy, device, critic_n
     if seed is not None:
         torch.manual_seed(seed)
         np.random.seed(seed)
-    # seeding the reset is enough, the following resets continue the same random stream
     state, _ = env.reset(seed=seed)
     buffer = PPOBufferExtended(buffer_size, device, gamma, ppo_lm)
     for _ in range(buffer_size):
