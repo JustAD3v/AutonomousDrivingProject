@@ -1,6 +1,7 @@
 from Trainers.TrainerWrapper import TrainerWrapper
 import random
 import sys
+import numpy as np
 import gymnasium as gym
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
@@ -26,10 +27,14 @@ class TrainerFactory:
             }
             configs = {
                 "actor": {"learning_rate": config.learning_rate},
-                "critic": {"learning_rate": config.learning_rate}
+                "critic": {"learning_rate": config.learning_rate},
+                "woca": {"learning_rate": config.learning_rate}
             }
             if config.ppo_continuous:
-                configs["actor"].update({"out_features": env.action_space.shape[0], "continuous": True})
+                action_size = env.action_space.shape[0]
+                configs["actor"].update({"out_features": action_size, "continuous": True})
+                # the worst-case Q network takes the state and the action as input
+                configs["woca"].update({"in_features": int(np.prod(env.observation_space.shape)) + action_size})
             return NetworkFactory(train_config=config, network_types=network_types, configs=configs)
 
         return NetworkFactory(train_config=config, network_types=StateOnlyNN)

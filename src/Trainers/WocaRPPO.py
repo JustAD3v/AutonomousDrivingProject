@@ -38,9 +38,13 @@ def get_worker_env(env_name, env_config):
         _worker_env = gym.make(env_name, config=env_config)
     return _worker_env
 
-def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
+def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm, seed=None):
     env = get_worker_env(env_name, env_config)
-    state, _ = env.reset()
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+    # seeding the reset is enough, the following resets continue the same random stream
+    state, _ = env.reset(seed=seed)
     buffer = PPOBufferExtended(buffer_size, device, gamma, ppo_lm)
     for _ in range(buffer_size):
         action, log_action_prob = policy.predict(state, device=device)
@@ -135,7 +139,7 @@ class WocaRPPO:
 
         # created on the first parallel collection and kept for the whole training
         self.executor = None
-        self.nworkers = None
+        self.nworkers = 1
 
         # wocaR params
         # k_wst starts low and grows towards config.k_wst: the paper increases the
@@ -192,6 +196,12 @@ class WocaRPPO:
             if self.config.buffer_size % nworkers == 0:
                 return nworkers
         return 1
+
+    def worker_seed(self, iteration, worker):
+        if self.config.seed is None:
+            return None
+        # a distinct seed per worker and per iteration, so workers don't collect the same rollout
+        return self.config.seed + iteration * self.nworkers + worker
 
     @Timer.measure("Prediction calculation")
     def _predict(self, state):
@@ -697,7 +707,7 @@ class WocaRPPO:
         self.optimize_model(loss, self.robust_actor_network)
 
     @Timer.measure("Sample collection")
-    def _collect_samples(self, parallel):
+    def _collect_samples(self, parallel, iteration):
         if parallel:
             if self.executor is None:
                 print("using parallel !")
@@ -715,13 +725,14 @@ class WocaRPPO:
                                      self.device,
                                      self.critic_network,
                                      self.config.gamma,
-                                     self.config.ppo_lm)
-                        for _ in range(self.nworkers)
+                                     self.config.ppo_lm,
+                                     self.worker_seed(iteration, worker))
+                        for worker in range(self.nworkers)
                     ]
             res = [f.result() for f in futures]
             self.buffer.merge(res)
         else:
-            state, _ = self.env.reset()
+            state, _ = self.env.reset(seed=self.worker_seed(iteration, 0))
 
             for _ in range(self.config.buffer_size):
                 # ========= SAMPLE COLLECTION =============
@@ -796,7 +807,7 @@ class WocaRPPO:
 
         while iteration < self.config.iterations:
             # ============ COLLECT SAMPLES INTO BATCHES =========
-            self._collect_samples(self.config.parallel)
+            self._collect_samples(self.config.parallel, iteration)
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
 
             # ============ GET BATCH =====================
