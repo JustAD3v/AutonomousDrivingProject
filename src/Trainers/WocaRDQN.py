@@ -15,6 +15,10 @@ from Utils.Timer import Timer
 from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
+# ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+DEBUG_BOUNDS = True
+# ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
 class WocaRDQN:
     def __init__(self, 
                  config: TrainConfig, 
@@ -50,6 +54,10 @@ class WocaRDQN:
         self.epsilon_step = (self.config.epsilon_min - self.config.epsilon_start)/(self.config.exploration_frac*self.config.iterations)
 
         self._bounded_robust_net = None
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        self._debug_calls = 0
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
         # wocaR params
         self.k_wst = config.k_wst
@@ -147,9 +155,33 @@ class WocaRDQN:
           method='CROWN'
       )
       # print(f'CROWN bounds: lower={lb_qvalues}, upper={ub_qvalues}')
-      print(f'CROWN bounds width: {(ub_qvalues - lb_qvalues).mean()}')
       # filter actions
-      return self.filter_actions(lb_qvalues, ub_qvalues)
+      subset_actions = self.filter_actions(lb_qvalues, ub_qvalues)
+
+      # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+      if DEBUG_BOUNDS:
+        self._debug_bounds(states, lb_qvalues, ub_qvalues, subset_actions)
+      # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+      return subset_actions
+
+    # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+    # width  : mean CROWN interval width, how blurry the perturbed qvalues are
+    # spread : mean (max - min) of the clean qvalues, how far apart the actions are
+    # an action is pruned only if its gap to the best one exceeds width, so the
+    # subset stays stuck at 5 as long as spread < width (ratio < 1)
+    def _debug_bounds(self, states, lb_qvalues, ub_qvalues, subset_actions):
+      self._debug_calls += 1
+      if self._debug_calls % self.config.log_freq:
+        return
+      with torch.no_grad():
+        qvalues = self.robust_net(states)
+      width = (ub_qvalues - lb_qvalues).mean().item()
+      spread = (qvalues.max(dim=1).values - qvalues.min(dim=1).values).mean().item()
+      subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+      print(f"[DEBUG] call={self._debug_calls} width={width:.4f} spread={spread:.4f} "
+            f"ratio={spread / max(width, 1e-12):.3f} subset={subset:.3f}")
+    # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
     def getDistMax(self, states,grad_steps):
       # detach states to not change the computational graph on it
@@ -300,7 +332,6 @@ class WocaRDQN:
     @Timer.measure("WOCA network update")
     def _train_woca_network(self, states, actions, rewards, next_states, dones):
               subset_actions = self.getSubsetActions(next_states)
-              print(f"subset mean len = {sum([len(e) for e in subset_actions])/len(subset_actions)}")
               with torch.no_grad():
                 # no need to build a graph for calculating target
                 # (no backprop is computed)
