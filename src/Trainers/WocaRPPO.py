@@ -324,29 +324,32 @@ class WocaRPPO:
                 action_means = self.robust_actor_network(states)
             var_actions = action_means.requires_grad_()
             step_eps = (action_ub - action_lb) / self.grad_steps
-            
-            # find action that minimizes the value of woca network using gradient descent
-            for _ in range(self.grad_steps):
-              # attach delta to the graph to register operations on it
-              # in order to compute the auto grad
-              var_actions.requires_grad_(True)
-    
-              # operations recorded in the graph
-              worst_q = self.woca_network(torch.cat((states, var_actions), dim=1))
 
-              # uses the graph to compute gradient
-              grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
-    
-              with torch.no_grad():
-                  # don't include those calculations in the comutational graph
-                  var_actions = torch.clamp(
-                      var_actions - step_eps * torch.sign(grad),
-                      min=action_lb,
-                      max=action_ub
-                  )
-              # detach var_action from the graph so next gradient calculation
-              # is a fresh new gradient independent from the previous one
-              var_actions = var_actions.detach()
+            # calcRegularization calls this under no_grad, but the minimization needs
+            # a graph on var_actions to get the descent direction
+            with torch.enable_grad():
+              # find action that minimizes the value of woca network using gradient descent
+              for _ in range(self.grad_steps):
+                # attach delta to the graph to register operations on it
+                # in order to compute the auto grad
+                var_actions.requires_grad_(True)
+
+                # operations recorded in the graph
+                worst_q = self.woca_network(torch.cat((states.detach(), var_actions), dim=1))
+
+                # uses the graph to compute gradient
+                grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
+
+                with torch.no_grad():
+                    # don't include those calculations in the comutational graph
+                    var_actions = torch.clamp(
+                        var_actions - step_eps * torch.sign(grad),
+                        min=action_lb,
+                        max=action_ub
+                    )
+                # detach var_action from the graph so next gradient calculation
+                # is a fresh new gradient independent from the previous one
+                var_actions = var_actions.detach()
             self.woca_network.zero_grad()
             with torch.no_grad():
                 min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
