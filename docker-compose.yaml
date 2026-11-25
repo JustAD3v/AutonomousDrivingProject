@@ -6,3 +6,5 @@ services:
       # mount the src in read only 
       # so changes in the code don't need a rebuild
       - ./src:/app/src:ro
+      # test configs and checkpoints, used by src/run_tests.py
+      - ./tests:/app/tests
