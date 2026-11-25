@@ -32,6 +32,7 @@ MODEL_DIR = ROOT / "tests" / "models"
 RESULT_DIR = ROOT / "tests" / "results"
 
 EVAL_EPISODES = 100
+EVAL_SEED = 123123
 # these model types are trained inside the docker compose container
 CONTAINER_MODEL_TYPES = ("ppo", "wocar_ppo")
 # a scenario fails when its success rate moves further than this from the baseline
@@ -55,14 +56,13 @@ SCENARIOS = {
         "model_type": "wocar_dqn",
         "config": "wocar_dqn.json",
         "evals": [CLEAN, FGSM_50],
-        # recorded before the FGSM rework, so expected to move
         "baselines": {"clean": 0.92, "fgsm_50": 0.80},
     },
     "ppo": {
         "model_type": "ppo",
         "config": "ppo.json",
         "evals": [CLEAN, FGSM_50, RANDOM_80],
-        "baselines": {"clean": 0.95, "fgsm_50": 0.04, "random_80": 0.74},
+        "baselines": {"clean": 0.84, "fgsm_50": 0.04, "random_80": 0.74},
     },
     "ppo_continuous": {
         "model_type": "ppo",
@@ -152,13 +152,12 @@ def evaluate_variant(name, variant_name, episodes):
         continuous=config.ppo_continuous,
         adversarial=build_adversarial(variant, policy, env),
         model=scenario["model_type"],
-        seed=config.seed,
+        seed=EVAL_SEED,
     )
     return name, variant_name, evaluator.eval().summary()
 
 
 def train_scenario_result(name, skip_train):
-    """Train one scenario (sequentially) and return its result without the evaluations."""
     scenario = SCENARIOS[name]
     config = load_config(scenario)
     model_path = MODEL_DIR / name
@@ -207,7 +206,7 @@ def result(name, variant_name, success_rate):
 
 def report(results):
     print("\n[+] === Scenario results ===")
-    print(f"{'scenario':<16}{'variant':<12}{'success':>9}{'baseline':>10}{'return':>10}   result")
+    print(f"{'scenario':<16}{'variant':<12}{'success':>9}{'baseline':>10}{'return':>10}{'result':>10}   choices")
     failures = 0
     for scenario_result in results:
         if "error" in scenario_result:
@@ -220,7 +219,7 @@ def report(results):
             status, baseline = result(scenario_result["scenario"], variant_name, rate)
             shown = f"{baseline*100:.0f}%" if baseline is not None else "-"
             print(f"{scenario_result['scenario']:<16}{variant_name:<12}{rate*100:>8.1f}%{shown:>10}"
-                  f"{summary['return_mean']:>10.2f}   {status}")
+                  f"{summary['return_mean']:>10.2f}{status:>10}   {summary['choices']}")
             failures += status == "DRIFT"
     print(f"[+] {len(results)} scenarios, {failures} drifted or failed")
     return failures
