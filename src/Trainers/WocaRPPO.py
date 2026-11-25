@@ -16,7 +16,7 @@ from auto_LiRPA import BoundedModule, BoundedTensor
 from auto_LiRPA.perturbations import PerturbationLpNorm
 
 # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-DEBUG_BOUNDS = True
+DEBUG = True
 # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
 _worker_env = None
@@ -159,7 +159,8 @@ class WocaRPPO:
         )
 
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-        self._debug_calls = 0
+        # one counter per tag, each tag is printed every log_freq calls
+        self._debug_calls = {}
         # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
     def k_wst_update(self, k_wst):
@@ -357,7 +358,23 @@ class WocaRPPO:
         # if the reward is not normalized (the case in some of our envs)
         # then the values can be absurdly big compared to the rest of the loss
         # so we need to rescale (+1e-8 to avoid division by zero)
-        return w_states / (w_states.mean() + 1e-8)
+        normalized_w_states = w_states / (w_states.mean() + 1e-8)
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        # raw_mean/raw_min : V - minQ before the clamp. A negative raw_min is expected
+        #                    while the woca network is untrained, a negative raw_mean
+        #                    means minQ is above V for most of the batch
+        # clamped : share of the batch zeroed by the clamp, 1.0 kills the regularization
+        if DEBUG:
+            raw_w_states = torch.sub(critic_values, min_qvalues).detach()
+            self._debug_log("WEIGHT",
+                            raw_mean=raw_w_states.mean().item(),
+                            raw_min=raw_w_states.min().item(),
+                            clamped=(raw_w_states <= 0).float().mean().item(),
+                            w_max=normalized_w_states.max().item())
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+        return normalized_w_states
 
     def calcRegularization(self, states, grad_step_size, grad_steps):
         with torch.no_grad():
@@ -366,6 +383,18 @@ class WocaRPPO:
             w_states = self.getStateWeight(states)
         max_dist = self.getDistMax(states, grad_step_size, grad_steps)
         reg = torch.mul(w_states, max_dist)
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        # dist : KL between the clean and the perturbed policy, 0 means the attack
+        #        found nothing (budget still too small or PGD too short)
+        if DEBUG:
+            self._debug_log("REG",
+                            reg=reg.mean().item(),
+                            dist_mean=max_dist.mean().item(),
+                            dist_max=max_dist.max().item(),
+                            w_mean=w_states.mean().item())
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
         return reg.mean()
 
     def filter_actions(self, lb_q, ub_q):
@@ -470,7 +499,7 @@ class WocaRPPO:
         subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
 
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-        if DEBUG_BOUNDS:
+        if DEBUG:
             self._debug_subset(clean_logits, subset_actions, "PGD-UNTARGETED")
         # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
@@ -528,7 +557,7 @@ class WocaRPPO:
         subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
 
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-        if DEBUG_BOUNDS:
+        if DEBUG:
             self._debug_subset(clean_values, subset_actions, "PGD")
         # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
@@ -540,7 +569,7 @@ class WocaRPPO:
         subset_actions = self.filter_actions(action_lb, action_ub)
 
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-        if DEBUG_BOUNDS:
+        if DEBUG:
             with torch.no_grad():
                 clean_logits = self.robust_actor_network(states)
             self._debug_subset(clean_logits, subset_actions, "CROWN",
@@ -550,6 +579,15 @@ class WocaRPPO:
         return subset_actions
 
     # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+    # one line per tag, printed every log_freq calls of that tag
+    def _debug_log(self, tag, **values):
+        calls = self._debug_calls.get(tag, 0) + 1
+        self._debug_calls[tag] = calls
+        if calls % self.config.log_freq:
+            return
+        fields = " ".join(f"{name}={value:+.4f}" for name, value in values.items())
+        print(f"[DEBUG-{tag}] call={calls} {fields}")
+
     # spread : mean (max - min) of the clean logits, how far apart the actions are
     # subset : mean size of the perturbed action set, the quantity to watch. A subset
     #          stuck at 1 means the worst case is unconstrained, stuck at n_actions
@@ -557,22 +595,31 @@ class WocaRPPO:
     # width  : CROWN variant only, mean interval width. An action is pruned only if its
     #          gap to the best one exceeds width, so the subset saturates while spread < width
     def _debug_subset(self, clean_logits, subset_actions, tag, width=None):
-        self._debug_calls += 1
-        if self._debug_calls % self.config.log_freq:
-            return
-        spread = (clean_logits.max(dim=1).values - clean_logits.min(dim=1).values).mean().item()
-        subset = sum(len(e) for e in subset_actions) / len(subset_actions)
-        message = (f"[DEBUG-{tag}] call={self._debug_calls} spread={spread:.4f} "
-                   f"subset={subset:.3f}")
+        values = {
+            "spread": (clean_logits.max(dim=1).values - clean_logits.min(dim=1).values).mean().item(),
+            "subset": sum(len(e) for e in subset_actions) / len(subset_actions),
+            "eps": self.attack_budget
+        }
         if width is not None:
-            message += f" width={width:.4f} ratio={spread / max(width, 1e-12):.3f}"
-        print(message)
+            values["width"] = width
+            values["ratio"] = values["spread"] / max(width, 1e-12)
+        self._debug_log(tag, **values)
     # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
     @Timer.measure("Critic network update")
     def _train_critic_network(self, states, returns):
         critic_values = self.critic_network(states).squeeze(-1)
         loss = self.critic_network.loss_fn(critic_values, returns)
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        if DEBUG:
+            self._debug_log("CRITIC",
+                            loss=loss.item(),
+                            v_mean=critic_values.mean().item(),
+                            ret_mean=returns.mean().item(),
+                            ret_std=returns.std().item())
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
         self.optimize_model(loss, self.critic_network)
 
     @Timer.measure("WOCA target calculation")
@@ -621,6 +668,16 @@ class WocaRPPO:
     def _train_woca_network(self, states, actions, rewards, next_states, dones, y_woca_target):
         y_woca = self.woca_network.get_qvalues((states, actions, rewards, next_states, dones), self.device)
         woca_loss = self.woca_network.loss_fn(y_woca.squeeze(), y_woca_target)
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        if DEBUG:
+            self._debug_log("WOCA",
+                            loss=woca_loss.item(),
+                            q_mean=y_woca.mean().item(),
+                            y_mean=y_woca_target.mean().item(),
+                            y_std=y_woca_target.std().item())
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
         self.optimize_model(woca_loss, self.woca_network)
 
     @Timer.measure("Robust actor network update")
@@ -650,11 +707,29 @@ class WocaRPPO:
         unclipped_objective = ratio * woca_advantages
         clipped_objective = clipped_ratio * woca_advantages
 
-        loss = -torch.minimum(unclipped_objective, clipped_objective).mean() + self.k_reg * reg_loss
+        surrogate = -torch.minimum(unclipped_objective, clipped_objective).mean()
+        reg_term = self.k_reg * reg_loss
+        # entropy is added to favor exploration
+        entropy_term = self.config.ent_coef * -torch.mean(entropy)
 
-        # add entropy to favor exploration
-        entropyloss = -torch.mean(entropy)
-        loss += self.config.ent_coef * entropyloss
+        loss = surrogate + reg_term + entropy_term
+
+        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+        # the three terms are the ones summed into the actor loss: if one of them
+        # dominates the others by orders of magnitude, its coefficient is off
+        # adv/qwst/wadv std show whether Q_wst keeps the same scale as the advantages
+        if DEBUG:
+            self._debug_log("ACTOR",
+                            loss=loss.item(),
+                            surrogate=surrogate.item(),
+                            reg_term=reg_term.item(),
+                            entropy_term=entropy_term.item(),
+                            adv_std=advantages.std().item(),
+                            qwst_std=woca_qvalues.std().item(),
+                            wadv_std=woca_advantages.std().item(),
+                            ratio_mean=ratio.mean().item(),
+                            k_wst=self.k_wst)
+        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
         self.optimize_model(loss, self.robust_actor_network)
 

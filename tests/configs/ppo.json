@@ -14,7 +14,7 @@
             25,
             40
         ],
-        "normalize_reward": false,
+        "normalize_reward": true,
         "simulation_frequency": 5,
         "policy_frequency": 1
     },
@@ -31,7 +31,7 @@
     "batch_size": 32,
     "copy_freq": 800,
     "train_freq": 1,
-    "iterations": 40,
+    "iterations": 50,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
     "ent_coef": 0.02,
