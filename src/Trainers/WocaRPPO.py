@@ -449,63 +449,7 @@ class WocaRPPO:
         )
         return lb_qvalues, ub_qvalues
 
-    # Untargeted PGD variant
-    def getSubsetActionsPgdUntargeted(self, states):
-        states = states.detach().to(device=self.device, dtype=torch.float32)
-
-        attack = self.attack_budget * self.attack_scale
-        grad_steps = self.grad_steps
-        grad_step_size = 2 * attack / grad_steps
-
-        with torch.no_grad():
-            clean_logits = self.robust_actor_network(states)
-        n_actions = clean_logits.shape[1]
-        # the clean preferred action is always reachable (delta = 0)
-        best_actions = clean_logits.argmax(dim=1)
-        reached = F.one_hot(best_actions, n_actions).bool()
-
-        delta = (2.0 * torch.rand_like(states) - 1.0) * attack
-
-        for _ in range(grad_steps):
-            # every action already found
-            if reached.all():
-                break
-
-            delta.requires_grad_(True)
-
-            p_values = self.robust_actor_network(states + delta)
-
-            values_best = p_values.gather(1, best_actions.unsqueeze(1)).squeeze(1)
-            values_other = p_values.masked_fill(reached, float("-inf")).max(dim=1).values
-            # rows that have reached every action have no rival left, ignore them
-            valid = ~reached.all(dim=1)
-            margin = ((values_best - values_other) * valid).sum()
-
-            grad = torch.autograd.grad(margin, delta)[0]
-
-            with torch.no_grad():
-                delta = torch.clamp(
-                    delta - grad_step_size * grad.sign(),
-                    min=-attack,
-                    max=attack
-                )
-                # record the preferred action reached at this step
-                reached |= F.one_hot(
-                    self.robust_actor_network(states + delta).argmax(dim=1),
-                    n_actions
-                ).bool()
-            delta = delta.detach()
-
-        subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
-
-        # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
-        if DEBUG:
-            self._debug_subset(clean_logits, subset_actions, "PGD-UNTARGETED")
-        # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
-
-        return subset_actions
-
-    # Targeted PGD variant 
+    # Targeted PGD variant
     def getSubsetActions(self, states):
         states = states.detach().to(device=self.device, dtype=torch.float32)
 
@@ -517,9 +461,13 @@ class WocaRPPO:
         with torch.no_grad():
             clean_values = self.robust_actor_network(states)
         batch_size, n_actions = clean_values.shape
-        # the clean preferred action is always reachable (delta = 0)
+        state_indices = torch.arange(batch_size, device=self.device)
+
+        # reached[state, action] is True once the adversary managed to force that action.
+        # The clean preferred action is always reachable (delta = 0)
         best_actions = clean_values.argmax(dim=1)
-        reached = F.one_hot(best_actions, n_actions).bool()
+        reached = torch.zeros(batch_size, n_actions, dtype=torch.bool, device=self.device)
+        reached[state_indices, best_actions] = True
 
         # one targeted attack per candidate action
         # An untargeted attack only explores one direction and systematically
@@ -527,6 +475,9 @@ class WocaRPPO:
         t_states = states.repeat(n_actions, 1) # process all 5 actions at once in a batch
         targets = torch.arange(n_actions, device=self.device).repeat_interleave(batch_size)
         t_best_actions = best_actions.repeat(n_actions)
+        # row (t * batch_size + b) holds states[b] attacked towards action t, so the state
+        # a stacked row belongs to is simply its index modulo batch_size
+        t_state_indices = state_indices.repeat(n_actions)
 
         delta = (2.0 * torch.rand_like(t_states) - 1.0) * attack
 
@@ -548,13 +499,14 @@ class WocaRPPO:
                     max=attack
                 )
                 # record the preferred action reached at this step, for every target block
-                p_best = self.robust_actor_network(t_states + delta).argmax(dim=1)
-                reached |= F.one_hot(p_best, n_actions).bool().view(
-                    n_actions, batch_size, n_actions
-                ).any(dim=0)
+                greedy_actions = self.robust_actor_network(t_states + delta).argmax(dim=1)
+                reached[t_state_indices, greedy_actions] = True
             delta = delta.detach()
 
-        subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
+        subset_actions = [
+            [action for action, is_reached in enumerate(row) if is_reached]
+            for row in reached.tolist()
+        ]
 
         # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
         if DEBUG:
