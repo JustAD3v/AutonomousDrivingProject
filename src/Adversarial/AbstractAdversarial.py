@@ -16,17 +16,21 @@ class Adversarial(ABC):
     def disrupt(self, state):
         pass
 
-    def feature_scale(self):
-        # Calculate Half-range of every observation feature 
-        # to scale the attack_bound with it 
+    @staticmethod
+    def feature_scale_of(env):
+        # Calculate Half-range of every observation feature
+        # to scale the attack_bound with it
         # that makes the bound a fraction of the
-        # range of each feature instead of an absolute value shared by features 
+        # range of each feature instead of an absolute value shared by features
         # living on different scales.
+        observation = env.unwrapped.observation_type
+        # the environment normalizes every feature of features_range to [-1, 1],
+        # so their half-range is 1. The others keep their own values: "presence"
+        # is a flag in [0, 1], so its half-range is 0.5
+        return np.array([1.0 if feature in observation.features_range else 0.5
+                         for feature in observation.features], dtype=np.float32)
+
+    def feature_scale(self):
         if self.scale is None:
-            observation = self.env.unwrapped.observation_type
-            # the environment normalizes every feature of features_range to [-1, 1],
-            # so their half-range is 1. The others keep their own values: "presence"
-            # is a flag in [0, 1], so its half-range is 0.5
-            self.scale = np.array([1.0 if feature in observation.features_range else 0.5
-                                   for feature in observation.features], dtype=np.float32)
+            self.scale = Adversarial.feature_scale_of(self.env)
         return self.scale

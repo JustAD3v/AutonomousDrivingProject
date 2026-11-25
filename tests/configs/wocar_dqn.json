@@ -38,5 +38,10 @@
             256
         ]
     },
+    "k_wst": 0.5,
+    "k_reg": 0.2,
+    "attack_budget": 0.05,
+    "wocar_grad_step_size":5e-4,
+    "wocar_grad_steps": 100,
     "log_freq": 20
 }

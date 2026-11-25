@@ -61,8 +61,8 @@ SCENARIOS = {
     "wocar_dqn": {
         "model_type": "wocar_dqn",
         "config": "wocar_dqn.json",
-        "evals": [CLEAN, FGSM_50],
-        "references": {"clean": 0.92, "fgsm_50": 0.80},
+        "evals": [CLEAN, FGSM_50, RANDOM_80],
+        "references": {"clean": 0.92, "fgsm_50": 0.80, "random_80": 0.71},
     },
     "ppo": {
         "model_type": "ppo",
