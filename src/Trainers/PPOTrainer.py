@@ -126,87 +126,89 @@ class PPOTrainer:
     def _environment_step(self, action):
         return self.env.step(self.policy.to_env_action(action))
     
+    @Timer.measure("Sample collection")
+    def _collect_samples(self, parallel):
+        if parallel:
+            print("using parallel !")
+            nworkers = self.rounded_nworkers()
+            buff_size = self.config.buffer_size // nworkers
+            with ProcessPoolExecutor(max_workers=nworkers) as executor:
+                futures = [executor.submit(collector_worker, 
+                                         self.env_name, 
+                                         self.env_config, 
+                                         buff_size, 
+                                         self.policy, 
+                                         self.device, 
+                                         self.critic_network, 
+                                         self.config.gamma, 
+                                         self.config.ppo_lm)
+                            for _ in range(nworkers)
+                        ]
+                res = [f.result() for f in futures]
+                self.buffer.merge(res)
+        else:
+            state, _ = self.env.reset()
+
+            for _ in range(self.config.buffer_size):
+                # ========= SAMPLE COLLECTION =============
+                action, log_action_prob = self._predict(state)
+                next_state, reward, term, trunc, _ = self._environment_step(action)
+                state_flat = np.asarray(state, dtype=np.float32).flatten()
+                with torch.no_grad():
+                    state_tensor = torch.as_tensor(
+                        state_flat,
+                        dtype=torch.float32,
+                        device=self.device
+                    )
+                    critic_value = self.critic_network(state_tensor).item()
+
+                # Store a detached scalar old log probability.
+                if torch.is_tensor(log_action_prob):
+                    log_action_prob = log_action_prob.detach().item()
+                
+                self.buffer.push((
+                    state_flat,
+                    action,
+                    reward,
+                    log_action_prob,
+                    critic_value
+                ))
+
+                end = term | trunc | self.buffer.full
+                if end:
+                    if term:
+                        extra_critic_value = 0.0
+                    else:
+                        next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
+                        with torch.no_grad():
+                            next_state_tensor = torch.as_tensor(
+                                next_state_array,
+                                dtype=torch.float32,
+                                device=self.device
+                            )
+                            extra_critic_value = self.critic_network(next_state_tensor).item()
+    
+                    self.buffer.finish_episode(extra_critic_value)
+                    
+                    # Reset the environment only if the episode ended.
+                    if term or trunc:
+                        state, _ = self.env.reset()
+                    else:
+                        # The buffer is full, but the episode may continue.
+                        state = next_state
+                else:
+                    state = next_state
+
     @Timer.measure("Training duration")
     def _train(self):
         print("[+] === Training starts ===")
         iteration = 0
 
         while iteration < self.config.iterations:
-            
-            if PARALLEL:
-                print("using parallel !")
-                nworkers = self.rounded_nworkers()
-                buff_size = self.config.buffer_size // nworkers
-                with ProcessPoolExecutor(max_workers=nworkers) as executor:
-                    futures = [executor.submit(collector_worker, 
-                                             self.env_name, 
-                                             self.env_config, 
-                                             buff_size, 
-                                             self.policy, 
-                                             self.device, 
-                                             self.critic_network, 
-                                             self.config.gamma, 
-                                             self.config.ppo_lm)
-                                for _ in range(nworkers)
-                            ]
-                    res = [f.result() for f in futures]
-                    self.buffer.merge(res)
-            else:
-                state, _ = self.env.reset()
-
-                for _ in range(self.config.buffer_size):
-                    # ========= SAMPLE COLLECTION =============
-                    action, log_action_prob = self._predict(state)
-                    next_state, reward, term, trunc, _ = self._environment_step(action)
-
-                    state_flat = np.asarray(state, dtype=np.float32).flatten()
-                    with torch.no_grad():
-                        state_tensor = torch.as_tensor(
-                            state_flat,
-                            dtype=torch.float32,
-                            device=self.device
-                        )
-                        critic_value = self.critic_network(state_tensor).item()
-
-                    # Store a detached scalar old log probability.
-                    if torch.is_tensor(log_action_prob):
-                        log_action_prob = log_action_prob.detach().item()
-
-                    self.buffer.push((
-                        state_flat,
-                        action,
-                        reward,
-                        log_action_prob,
-                        critic_value
-                    ))
-
-                    end = term | trunc | self.buffer.full
-                    if end:
-                        if term:
-                            extra_critic_value = 0.0
-                        else:
-                            next_state_array = np.asarray(next_state, dtype=np.float32).flatten()
-                            with torch.no_grad():
-                                next_state_tensor = torch.as_tensor(
-                                    next_state_array,
-                                    dtype=torch.float32,
-                                    device=self.device
-                                )
-                                extra_critic_value = self.critic_network(next_state_tensor).item()
-        
-                        self.buffer.finish_episode(extra_critic_value)
-
-                        # Reset the environment only if the episode ended.
-                        if term or trunc:
-                            state, _ = self.env.reset()
-                        else:
-                            # The buffer is full, but the episode may continue.
-                            state = next_state
-                    else:
-                        state = next_state
-
+            # ============ COLLECT SAMPLES INTO BATCHES =========
+            self._collect_samples(PARALLEL)
             self.record.add_episodes(self.buffer.episode_stats, iteration=iteration)
-
+            
             # ============ GET BATCH =====================
             minibatches = self.buffer.get_batch()
             for _ in range(self.config.ppo_update_epochs):
