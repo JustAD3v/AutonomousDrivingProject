@@ -314,45 +314,69 @@ class WocaRPPO:
 
         return final_dist
 
-    def getStateWeight(self, states):
-        # use wocar network to calculate minQvalue
-        # use critic network to calculate the critic value
-        # calculate the weight as stated in the paper : V - minQ
-        if self.config.ppo_continuous:
-            action_lb, action_ub = torch.tensor(self.env.action_space.low), torch.tensor(self.env.action_space.high)
-            with torch.no_grad():
-                action_means = self.robust_actor_network(states)
-            var_actions = action_means.requires_grad_()
-            step_eps = (action_ub - action_lb) / self.grad_steps
+    # Continuous version of getSubsetActions + woca_network.getMinQ : 
+    # the bounds of the subset of actions is found 
+    # using the relaxation bounds of the gaussian mean,
+    # Then the worst one is found by gradient descent inside those bounds
+    @Timer.measure("WOCA continuous min Q")
+    def getMinQContinuous(self, states):
+        states = states.detach()
+        # the actor output is the gaussian mean, so bounding the actor bounds the forced action
+        # IBP+Backward (CROWN-IBP) is the relaxation the paper uses for continuous actions
+        action_lb, action_ub = self.getActionBounds(states, method="CROWN-IBP")
+        action_lb, action_ub = action_lb.detach(), action_ub.detach()
 
-            # calcRegularization calls this under no_grad, but the minimization needs
-            # a graph on var_actions to get the descent direction
-            with torch.enable_grad():
-              # find action that minimizes the value of woca network using gradient descent
-              for _ in range(self.grad_steps):
-                # attach delta to the graph to register operations on it
-                # in order to compute the auto grad
+        with torch.no_grad():
+            # s is in its own epsilon-ball, so the clean mean is always inside the box
+            action_means = self.robust_actor_network(states)
+        var_actions = action_means.clone()
+        # cover the whole width of the box in grad_steps steps
+        step_eps = (action_ub - action_lb) / self.grad_steps
+
+        # the optimization needs a graph on var_actions
+        with torch.enable_grad():
+            for _ in range(self.grad_steps):
                 var_actions.requires_grad_(True)
 
-                # operations recorded in the graph
-                worst_q = self.woca_network(torch.cat((states.detach(), var_actions), dim=1))
-
                 # uses the graph to compute gradient
+                worst_q = self.woca_network(torch.cat((states, var_actions), dim=1))
                 grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
 
                 with torch.no_grad():
-                    # don't include those calculations in the comutational graph
                     var_actions = torch.clamp(
                         var_actions - step_eps * torch.sign(grad),
                         min=action_lb,
                         max=action_ub
                     )
-                # detach var_action from the graph so next gradient calculation
-                # is a fresh new gradient independent from the previous one
+                # detach so the next gradient is independent from the previous one
                 var_actions = var_actions.detach()
-            self.woca_network.zero_grad()
-            with torch.no_grad():
-                min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
+
+        with torch.no_grad():
+            min_qvalues = self.woca_network(torch.cat((states, var_actions), dim=1)).squeeze(-1)
+
+            # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+            # width : box width, the continuous equivalent of the discrete "subset" size.
+            #         0 means the attacker can force nothing, above 2 (the action space
+            #         width) means the relaxation is too loose to constrain anything
+            # gap   : Q_wst(s, mean) - minQ, 0 means the descent found nothing
+            if DEBUG:
+                clean_qvalues = self.woca_network(torch.cat((states, action_means), dim=1)).squeeze(-1)
+                box_width = action_ub - action_lb
+                self._debug_log("MINQ",
+                                width=box_width.mean().item(),
+                                width_max=box_width.max().item(),
+                                gap=(clean_qvalues - min_qvalues).mean().item(),
+                                eps=self.attack_budget)
+            # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+        return min_qvalues
+
+    def getStateWeight(self, states):
+        # use wocar network to calculate minQvalue
+        # use critic network to calculate the critic value
+        # calculate the weight as stated in the paper : V - minQ
+        if self.config.ppo_continuous:
+            min_qvalues = self.getMinQContinuous(states)
         else:
             min_qvalues = self.woca_network.getMinQ(states, self.env.action_space.n, self.device)
 
@@ -431,7 +455,7 @@ class WocaRPPO:
             ])
         return actions
 
-    def getActionBounds(self, states):
+    def getActionBounds(self, states, method="CROWN"):
         # get lower and upper bound of perturbated states
         attack = self.attack_budget * self.attack_scale
         lb_states = (states - attack).to(
@@ -457,7 +481,7 @@ class WocaRPPO:
         # Compute bounds using CROWN
         lb_qvalues, ub_qvalues = self._bounded_robust_net.compute_bounds(
             x=(bounded_qvalues,),
-            method='CROWN'
+            method=method
         )
         return lb_qvalues, ub_qvalues
 
@@ -589,37 +613,7 @@ class WocaRPPO:
     @Timer.measure("WOCA target calculation")
     def _woca_target(self, rewards, next_states, dones):
         if self.config.ppo_continuous:
-            action_lb, action_ub = torch.tensor(self.env.action_space.low), torch.tensor(self.env.action_space.high)
-            with torch.no_grad():
-                action_means = self.robust_actor_network(next_states)
-            var_actions = action_means.requires_grad_()
-            step_eps = (action_ub - action_lb) / self.grad_steps
-
-            # find action that minimizes the value of woca network using gradient descent
-            for _ in range(self.grad_steps):
-              # attach delta to the graph to register operations on it
-              # in order to compute the auto grad
-              var_actions.requires_grad_(True)
-
-              # operations recorded in the graph
-              worst_q = self.woca_network(torch.cat((next_states, var_actions), dim=1))
-
-              # uses the graph to compute gradient
-              grad = torch.autograd.grad(worst_q.sum(), var_actions)[0]
-
-              with torch.no_grad():
-                  # don't include those calculations in the comutational graph
-                  var_actions = torch.clamp(
-                      var_actions - step_eps * torch.sign(grad),
-                      min=action_lb,
-                      max=action_ub
-                  )
-              # detach var_action from the graph so next gradient calculation
-              # is a fresh new gradient independent from the previous one
-              var_actions = var_actions.detach()
-            self.woca_network.zero_grad()
-            with torch.no_grad():
-                woca_qvalues = self.woca_network(torch.cat((next_states, var_actions), dim=1)).squeeze(1)
+            woca_qvalues = self.getMinQContinuous(next_states)
         else:
             # the actions an attacker can force the agent to take from next_states
             subset_actions = self.getSubsetActions(next_states)
