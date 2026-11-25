@@ -365,14 +365,38 @@ class WocaRPPO:
             # raw_width : width before the intersection with the action space. Reaching 2
             #             (the action space width) means the bounds constrain nothing
             # gap       : Q_wst(s, mean) - minQ, 0 means the descent found nothing
+            # width_sig : box width in units of the policy sigma. Q_wst is only ever fit
+            #             on actions drawn at that sigma, so this is how far outside its
+            #             training support the descent is allowed to go
+            # dev_sig   : distance of the minimizing action from the clean mean, same units
+            # oos_gap   : min over actions sampled from the policy itself, minus minQ.
+            #             Positive means the box descent reached values no in-support
+            #             action can reach, which is extrapolation rather than worst case
             if DEBUG:
                 clean_qvalues = self.woca_network(torch.cat((states, action_means), dim=1)).squeeze(-1)
                 box_width = action_ub - action_lb
+                sigma = self.robust_actor_network.log_std.detach().clamp(-5.0, 1.0).exp()
+
+                # fixed, not woca_baseline_samples: this is a measurement called once
+                # per minibatch and must not get more expensive when that is raised
+                nsamples = 8
+                noise = torch.randn(nsamples, *action_means.shape, device=self.device)
+                in_support = (action_means.unsqueeze(0) + sigma * noise).clamp(min=space_lb, max=space_ub)
+                repeated_states = states.unsqueeze(0).expand(nsamples, -1, -1)
+                in_support_qvalues = self.woca_network(torch.cat(
+                    (repeated_states.flatten(0, 1), in_support.flatten(0, 1)),
+                    dim=1
+                )).view(nsamples, states.shape[0])
+                min_in_support = in_support_qvalues.min(dim=0).values
+
                 self._debug_log("MINQ",
                                 width=box_width.mean().item(),
                                 width_max=box_width.max().item(),
                                 raw_width=raw_width.mean().item(),
                                 gap=(clean_qvalues - min_qvalues).mean().item(),
+                                width_sig=(box_width / sigma).mean().item(),
+                                dev_sig=((var_actions - action_means).abs() / sigma).mean().item(),
+                                oos_gap=(min_in_support - min_qvalues).mean().item(),
                                 eps=self.attack_budget)
             # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
@@ -726,6 +750,31 @@ class WocaRPPO:
                 # we sample actual qvalues which follow the distribution
                 # so it gives an approximation of the weighted sum (Monte Carlo method)
                 baseline = baseline_qvalues.view(nsamples, states.shape[0]).mean(dim=0)
+
+                # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+                # Does Q_wst use its action input at all, and on what support was it fit
+                # q_std_a : spread of Q_wst over the actions sampled at a fixed state,
+                #           averaged over states. 0 means the action input carries nothing
+                # q_std_s : spread over states of the per-state average. The ratio
+                #           q_std_a / q_std_s is the share of the variation Q_wst
+                #           explains with the action rather than with the state alone
+                # buf_dev : |a_buf - mu(s)| in sigma units, the support the regression
+                #           actually sees. To be read against MINQ's width_sig
+                # sigma   : that support in action units, same comparison
+                if DEBUG:
+                    q_per_sample = baseline_qvalues.view(nsamples, states.shape[0])
+                    q_std_a = q_per_sample.std(dim=0).mean()
+                    q_std_s = baseline.std()
+                    sigma = self.robust_actor_network.log_std.detach().clamp(-5.0, 1.0).exp()
+                    action_means = self.robust_actor_network(states)
+                    self._debug_log("QACT",
+                                    q_std_a=q_std_a.item(),
+                                    q_std_s=q_std_s.item(),
+                                    ratio=(q_std_a / (q_std_s + 1e-8)).item(),
+                                    buf_dev=((actions - action_means).abs() / sigma).mean().item(),
+                                    sigma=sigma.mean().item())
+                # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
                 return woca_qvalues - baseline
             else:
                 qvalues = self.woca_network(states)

@@ -14,7 +14,7 @@
             25,
             40
         ],
-        "normalize_reward": false,
+        "normalize_reward": true,
         "simulation_frequency": 15,
         "policy_frequency": 5
     },
@@ -22,7 +22,7 @@
     "parallel": true,
     "gamma": 0.99,
     "buffer_size": 2048,
-    "iterations": 50,
+    "iterations": 200,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
     "ent_coef": 0.0,
@@ -38,6 +38,7 @@
     "ppo_critic_update_steps": 10,
     "ppo_update_epochs": 10,
     "woca_update_epochs": 4,
+    "woca_baseline_samples": 64,
     "ppo_clip_epsilon": 0.2,
     "ppo_lm": 0.8,
     "ppo_nworkers": 8,
