@@ -16,14 +16,27 @@ from auto_LiRPA.perturbations import PerturbationLpNorm
 
 PARALLEL = True
 
+_worker_env = None
+
 def init_collector_worker():
-    # Workers only run single-state inference, where extra intra-op threads cost
-    # more in synchronization than they save, and all workers together would
-    # oversubscribe the CPU.
+    # Workers only run single-state inference
+    # by default pytorch creates multithreads to run calculations
+    # and divide the work
+    # but here the work down is too small so the thread spawning overhead
+    # is bigger than its benefit
+    # so restrict it to only one thread 
     torch.set_num_threads(1)
 
+def get_worker_env(env_name, env_config):
+    # Workers are reused across iterations, so the env is built once per process
+    # so cache the env to not create it at every call
+    global _worker_env
+    if _worker_env is None:
+        _worker_env = gym.make(env_name, config=env_config)
+    return _worker_env
+
 def collector_worker(env_name, env_config, buffer_size, policy, device, critic_network, gamma, ppo_lm):
-    env = gym.make(env_name, config=env_config)
+    env = get_worker_env(env_name, env_config)
     state, _ = env.reset()
     buffer = PPOBufferExtended(buffer_size, device, gamma, ppo_lm)
     for _ in range(buffer_size):
