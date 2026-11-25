@@ -31,8 +31,14 @@ class TrainerFactory:
                 "woca": {"learning_rate": config.learning_rate},
             }
             if config.ppo_continuous:
-                configs["actor"]["out_features"] = env.action_space.shape[0]
-                configs["actor"]["continuous"] = True
+                action_size = env.action_space.shape[0]
+                configs["actor"].update({
+                    "out_features": action_size,
+                    "continuous": True,
+                    "log_std_min": config.log_std_min
+                })
+                # the worst-case Q network takes the state and the action as input
+                configs["woca"].update({"in_features": int(np.prod(env.observation_space.shape)) + action_size})
             else:
                 # Match the observation size and discrete action count
                 observation_size = int(np.prod(env.observation_space.shape))

@@ -375,7 +375,7 @@ class WocaRPPO:
             if DEBUG:
                 clean_qvalues = self.woca_network(torch.cat((states, action_means), dim=1)).squeeze(-1)
                 box_width = action_ub - action_lb
-                sigma = self.robust_actor_network.log_std.detach().clamp(-5.0, 1.0).exp()
+                sigma = self.robust_actor_network.log_std.detach().clamp(self.robust_actor_network.log_std_min, 1.0).exp()
 
                 # fixed, not woca_baseline_samples: this is a measurement called once
                 # per minibatch and must not get more expensive when that is raised
@@ -765,7 +765,7 @@ class WocaRPPO:
                     q_per_sample = baseline_qvalues.view(nsamples, states.shape[0])
                     q_std_a = q_per_sample.std(dim=0).mean()
                     q_std_s = baseline.std()
-                    sigma = self.robust_actor_network.log_std.detach().clamp(-5.0, 1.0).exp()
+                    sigma = self.robust_actor_network.log_std.detach().clamp(self.robust_actor_network.log_std_min, 1.0).exp()
                     action_means = self.robust_actor_network(states)
                     self._debug_log("QACT",
                                     q_std_a=q_std_a.item(),
@@ -1004,7 +1004,7 @@ class WocaRPPO:
                                 every=1,
                                 log_std_mean=log_std.mean().item(),
                                 log_std_max=log_std.max().item(),
-                                std_mean=log_std.clamp(-5.0, 1.0).exp().mean().item())
+                                std_mean=log_std.clamp(self.robust_actor_network.log_std_min, 1.0).exp().mean().item())
             # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
 
             self.buffer.reset()

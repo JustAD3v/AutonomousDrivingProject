@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 class ActorNetwork(nn.Module):
-  def __init__(self, in_features=25, h1=256, h2=256, out_features=5, learning_rate=5e-4, continuous=False):
+  def __init__(self, in_features=25, h1=256, h2=256, out_features=5, learning_rate=5e-4, continuous=False, log_std_min=-5.0):
     # init internal pytorch nn.Module parent class
     super().__init__()
 
@@ -14,6 +14,7 @@ class ActorNetwork(nn.Module):
     self.out = nn.Linear(h2, out_features)
 
     self.continuous = continuous
+    self.log_std_min = log_std_min
     if continuous:
       # state-independent log standard deviation, learned with the network
       self.log_std = nn.Parameter(-0.5 * torch.ones(out_features))
@@ -34,7 +35,10 @@ class ActorNetwork(nn.Module):
       # clamp log_std to avoid unstable training
       # if clamp is too low the gaussian will be very "precise" and so there is no exploration
       # if clamp is too high the gaussian will be too "flat" and so mostly noise
-      std = torch.exp(self.log_std.clamp(-5.0, 1.0))
+      # log_std_min acts as a sigma floor. It is left at -5.0 by default and only raised
+      # by the configs that need it: with the WocaR regularization the mean flattens and
+      # PPO answers by shrinking sigma, which ends in a confidently near-constant policy
+      std = torch.exp(self.log_std.clamp(self.log_std_min, 1.0))
       # we expand to match the size of the output 
       # (which can be different from just out_features initialized in the constructor if we use mutliple minibatches)
       # (with minibatches we have multiple elements of size out_features)

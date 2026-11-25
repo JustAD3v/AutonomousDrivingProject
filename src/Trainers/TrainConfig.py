@@ -40,6 +40,7 @@ class TrainConfig:
         self.ppo_update_epochs = 4
         self.woca_update_epochs = 4  # passes of the worst-case network over a batch
         self.woca_baseline_samples = 8  # actions sampled per state for the continuous woca advantage baseline
+        self.log_std_min = -5.0  # sigma floor of the continuous actor, as exp(log_std_min)
         self.ppo_clip_epsilon = 0.2
         self.ppo_lm = 0.8
         self.ppo_nworkers = 8
@@ -285,6 +286,10 @@ class TrainConfigBuilder:
 
     def woca_baseline_samples(self, value):
         self._config.woca_baseline_samples = value
+        return self
+
+    def log_std_min(self, value):
+        self._config.log_std_min = value
         return self
 
     def ppo_update_epochs(self, value):
