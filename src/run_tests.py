@@ -43,14 +43,15 @@ TOLERANCE = 0.10
 # Evaluation variants, reused across scenarios so the attacks stay identical.
 CLEAN = {"name": "clean", "attack": None, "attack_bound": 0.0}
 FGSM_50 = {"name": "fgsm_50", "attack": "fgsm", "attack_bound": 0.5}
+FGSM_10 = {"name": "fgsm_10", "attack": "fgsm", "attack_bound": 0.1}
 RANDOM_80 = {"name": "random_80", "attack": "random", "attack_bound": 0.8}
 
 SCENARIOS = {
     "dqn": {
         "model_type": "dqn",
         "config": "dqn.json",
-        "evals": [CLEAN, FGSM_50],
-        "references": {"clean": 0.99, "fgsm_50": 0.16},
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": 0.99, "fgsm_10": 0.47, "random_80": 0.19},
     },
     "sb3_dqn": {
         "model_type": "sb3_dqn",
@@ -61,8 +62,8 @@ SCENARIOS = {
     "wocar_dqn": {
         "model_type": "wocar_dqn",
         "config": "wocar_dqn.json",
-        "evals": [CLEAN, FGSM_50, RANDOM_80],
-        "references": {"clean": 0.92, "fgsm_50": 0.80, "random_80": 0.71},
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": 0.92, "random_80": 0.71, "fgsm_10": 0.86},
     },
     "ppo": {
         "model_type": "ppo",

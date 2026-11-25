@@ -28,6 +28,8 @@ class TrainConfig:
         self.attack_budget = 0.05
         self.wocar_grad_step_size = 5e-4
         self.wocar_grad_steps = 100
+        self.wocar_hinge_c = 1.0
+        self.pretrained_net = None
         self.ppo_actor_update_steps = 4
         self.ppo_critic_update_steps = 4
         self.ppo_update_epochs = 4
@@ -233,7 +235,15 @@ class TrainConfigBuilder:
     def wocar_grad_steps(self, value):
         self._config.wocar_grad_steps = value
         return self
-    
+
+    def wocar_hinge_c(self, value):
+        self._config.wocar_hinge_c = value
+        return self
+
+    def pretrained_net(self, value):
+        self._config.pretrained_net = value
+        return self
+
     def ppo_actor_update_steps(self, value):
         self._config.ppo_actor_update_steps = value
         return self

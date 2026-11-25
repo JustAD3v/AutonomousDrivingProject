@@ -29,7 +29,7 @@
     "batch_size": 64,
     "copy_freq": 50,
     "train_freq": 1,
-    "iterations": 5e3,
+    "iterations": 3e3,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
     "policy_kwargs": {
@@ -38,9 +38,11 @@
             256
         ]
     },
+    "pretrained_net": "tests/models/dqn",
+    "wocar_hinge_c": 0.3,
     "k_wst": 0.5,
-    "k_reg": 0.005,
-    "attack_budget": 0.05,
+    "k_reg": 0.02,
+    "attack_budget": 0.1,
     "wocar_grad_step_size":5e-4,
     "wocar_grad_steps": 100,
     "log_freq": 20

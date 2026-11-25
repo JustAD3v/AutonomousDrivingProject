@@ -89,6 +89,13 @@ class TrainerFactory:
                 main_network = network_factory.create()
                 woca_network = network_factory.create()
 
+                if config.pretrained_net is not None:
+                    import torch
+                    weights = torch.load(config.pretrained_net)
+                    for network in (robust_network, target_network, main_network):
+                        network.load_state_dict(weights)
+                    print(f"[+] WocaR networks warm started from : {config.pretrained_net}")
+
                 policy = CustomPolicy(network=robust_network, action_space=env.action_space)
 
                 trainer = WocaRDQN(

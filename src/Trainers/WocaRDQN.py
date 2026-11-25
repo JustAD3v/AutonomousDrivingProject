@@ -125,7 +125,138 @@ class WocaRDQN:
           ])
       return actions
     
+    # Untargeted PGD variant: a single attack per state, pushing away from the clean
+    # greedy action, collecting every greedy action met along the path. Cheaper than the
+    # targeted version (one block instead of n_actions) but it only explores one direction,
+    # so it tends to report smaller subsets.
+    def getSubsetActionsPgdUntargeted(self, states):
+      states = states.detach().to(device=self.device, dtype=torch.float32)
+
+      attack = self.attack_budget * self.attack_scale
+      grad_steps = self.grad_steps
+      grad_step_size = 2 * attack / grad_steps
+
+      with torch.no_grad():
+        clean_qvalues = self.robust_net(states)
+      n_actions = clean_qvalues.shape[1]
+      # the clean greedy action is always reachable (delta = 0)
+      best_actions = clean_qvalues.argmax(dim=1)
+      reached = F.one_hot(best_actions, n_actions).bool()
+
+      delta = (2.0 * torch.rand_like(states) - 1.0) * attack
+
+      for _ in range(grad_steps):
+        # every action already found: nothing left to search for, and masking them all
+        # would make q_other -inf and the gradient NaN
+        if reached.all():
+          break
+
+        delta.requires_grad_(True)
+
+        p_qvalues = self.robust_net(states + delta)
+        # CW-style margin of the clean greedy action against its best rival, the
+        # actions already reached being excluded so the attack aims at a new one
+        q_best = p_qvalues.gather(1, best_actions.unsqueeze(1)).squeeze(1)
+        q_other = p_qvalues.masked_fill(reached, float("-inf")).max(dim=1).values
+        # rows that have reached every action have no rival left, ignore them
+        valid = ~reached.all(dim=1)
+        # descending the margin pushes the ranking towards the other actions
+        margin = ((q_best - q_other) * valid).sum()
+
+        grad = torch.autograd.grad(margin, delta)[0]
+
+        with torch.no_grad():
+            delta = torch.clamp(
+                delta - grad_step_size * grad.sign(),
+                min=-attack,
+                max=attack
+            )
+            # record the greedy action reached at this step
+            reached |= F.one_hot(
+                self.robust_net(states + delta).argmax(dim=1),
+                n_actions
+            ).bool()
+        delta = delta.detach()
+
+      subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
+
+      # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+      if DEBUG_BOUNDS:
+        self._debug_calls += 1
+        if self._debug_calls % self.config.log_freq == 0:
+          spread = (clean_qvalues.max(dim=1).values - clean_qvalues.min(dim=1).values).mean().item()
+          subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+          print(f"[DEBUG-PGD-UNTARGETED] call={self._debug_calls} spread={spread:.4f} subset={subset:.3f}")
+      # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+      return subset_actions
+
+    # PGD variant of the subset estimation
+    # Instead of certified CROWN bounds we run an untargeted attack on robust_net from each
+    # state and collect every greedy action reached along the path: those are the actions the
+    # adversary is empirically able to force.
     def getSubsetActions(self, states):
+      states = states.detach().to(device=self.device, dtype=torch.float32)
+
+      attack = self.attack_budget * self.attack_scale
+      grad_steps = self.grad_steps
+      grad_step_size = 2 * attack / grad_steps
+
+      with torch.no_grad():
+        clean_qvalues = self.robust_net(states)
+      batch_size, n_actions = clean_qvalues.shape
+      # the clean greedy action is always reachable (delta = 0)
+      best_actions = clean_qvalues.argmax(dim=1)
+      reached = F.one_hot(best_actions, n_actions).bool()
+
+      # one targeted attack per candidate action, all stacked in a single batch:
+      # block t holds the whole state batch attacked towards action t.
+      # An untargeted attack only ever explores one direction and systematically
+      # under-estimates the subset, which makes the worst-case value optimistic.
+      t_states = states.repeat(n_actions, 1)
+      targets = torch.arange(n_actions, device=self.device).repeat_interleave(batch_size)
+      t_best_actions = best_actions.repeat(n_actions)
+
+      delta = (2.0 * torch.rand_like(t_states) - 1.0) * attack
+
+      for _ in range(grad_steps):
+        delta.requires_grad_(True)
+
+        p_qvalues = self.robust_net(t_states + delta)
+    
+        q_target = p_qvalues.gather(1, targets.unsqueeze(1)).squeeze(1)
+        q_best = p_qvalues.gather(1, t_best_actions.unsqueeze(1)).squeeze(1)
+        margin = (q_target - q_best).sum()
+
+        grad = torch.autograd.grad(margin, delta)[0]
+
+        with torch.no_grad():
+            delta = torch.clamp(
+                delta + grad_step_size * grad.sign(),
+                min=-attack,
+                max=attack
+            )
+            # record the greedy action reached at this step, for every target block
+            p_best = self.robust_net(t_states + delta).argmax(dim=1)
+            reached |= F.one_hot(p_best, n_actions).bool().view(
+                n_actions, batch_size, n_actions
+            ).any(dim=0)
+        delta = delta.detach()
+
+      subset_actions = [row.nonzero(as_tuple=True)[0].tolist() for row in reached]
+
+      # ============ DEBUG ONLY - REMOVE AFTER DEBUG PHASE ============
+      if DEBUG_BOUNDS:
+        self._debug_calls += 1
+        if self._debug_calls % self.config.log_freq == 0:
+          spread = (clean_qvalues.max(dim=1).values - clean_qvalues.min(dim=1).values).mean().item()
+          subset = sum(len(e) for e in subset_actions) / len(subset_actions)
+          print(f"[DEBUG-PGD] call={self._debug_calls} spread={spread:.4f} subset={subset:.3f}")
+      # ========== END DEBUG ONLY - REMOVE AFTER DEBUG PHASE ==========
+
+      return subset_actions
+
+    def getSubsetActionsCrown(self, states):
       # get lower and upper bound of perturbated states
       attack = self.attack_budget * self.attack_scale
       lb_states = (states - attack).to(
@@ -271,13 +402,63 @@ class WocaRDQN:
       min_qvalues = self.main_net.getMinQ(states, self.env.action_space.n, self.device)
       return torch.sub(max_qvalues, min_qvalues)
     
-    def calcRegularization(self, states, grad_steps):
+    def calcRegularizationKL(self, states, grad_steps):
       with torch.no_grad():
         # w(s) does not need to be part of the graph for backprop
-        # It can be treated as a constant 
+        # It can be treated as a constant
         w_states = self.getStateWeight(states)
       max_dists = self.getDistMax(states, grad_steps)
       reg = torch.mul(w_states, max_dists)
+      return reg.mean()
+
+    # PGD attack maximizing the margin (i.e the distance between the best qvalue and the second best one)
+    # margin(s) = max_{a != a*} Q(s,a) - Q(s,a*)
+    def getAdvMargin(self, states, grad_steps):
+      states = states.detach()
+
+      with torch.no_grad():
+        clean_qvalues = self.robust_net(states)
+        best_actions = clean_qvalues.argmax(dim=1)
+      best_mask = F.one_hot(best_actions, clean_qvalues.shape[1]).bool()
+
+      attack = self.attack_budget * self.attack_scale
+      grad_step_size = 2 * attack / grad_steps
+      delta = (2.0 * torch.rand_like(states) - 1.0) * attack
+
+      def margin_of(qvalues):
+        q_best = qvalues.gather(1, best_actions.unsqueeze(1)).squeeze(1)
+        q_other = qvalues.masked_fill(best_mask, float("-inf")).max(dim=1).values
+        return q_other - q_best
+
+      # find the perturbation that maximizes the margin, by gradient ascent
+      for _ in range(grad_steps):
+        delta.requires_grad_(True)
+
+        p_qvalues = self.robust_net(states + delta)
+        margin = margin_of(p_qvalues).sum()
+
+        grad = torch.autograd.grad(margin, delta)[0]
+
+        with torch.no_grad():
+            delta = torch.clamp(
+                delta + grad_step_size * grad.sign(),
+                min=-attack,
+                max=attack
+            )
+        delta = delta.detach()
+
+      # recompute outside of the loop, on a fresh graph the robust_net optimization can use
+      final_margin = margin_of(self.robust_net(states + delta))
+      # we clamp the margin to avoid widening the margin too much 
+      return torch.clamp(final_margin, min=-self.config.wocar_hinge_c)
+
+    def calcRegularization(self, states, grad_steps):
+      with torch.no_grad():
+        # w(s) does not need to be part of the graph for backprop
+        # It can be treated as a constant
+        w_states = self.getStateWeight(states)
+      adv_margins = self.getAdvMargin(states, grad_steps)
+      reg = torch.mul(w_states, adv_margins)
       return reg.mean()
 
     @Timer.measure("Prediction calculation")
