@@ -14,7 +14,7 @@
             25,
             40
         ],
-        "normalize_reward": true,
+        "normalize_reward": false,
         "simulation_frequency": 15,
         "policy_frequency": 5
     },
@@ -25,7 +25,7 @@
     "iterations": 50,
     "learning_rate": 0.0005,
     "max_grad_norm": 0.5,
-    "ent_coef": 0.01,
+    "ent_coef": 0.0,
     "policy_kwargs": {
         "net_arch": [
             256,
