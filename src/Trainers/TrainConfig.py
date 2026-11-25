@@ -48,9 +48,7 @@ class TrainConfig:
         self.ppo_gamma = 0.90
         self.gae_lambda = 0.8
         self.clip_range = 0.2
-        self.ent_coef = 0.01
         self.vf_coef = 0.5
-        self.max_grad_norm = 0.5
         self.ppo_net_arch = [256, 256]   # same width as the DQN network, for a fair comparison
         self.tensorboard_log = None      # e.g. "./tb_logs/" (needs tensorboard installed)
         self.n_envs = 8 #number of envs. 
@@ -323,10 +321,6 @@ class TrainConfigBuilder:
 
     def vf_coef(self, value):
         self._config.vf_coef = value
-        return self
-
-    def max_grad_norm(self, value):
-        self._config.max_grad_norm = value
         return self
 
     def ppo_net_arch(self, value):
