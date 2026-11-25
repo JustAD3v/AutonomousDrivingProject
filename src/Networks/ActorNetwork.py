@@ -39,19 +39,19 @@ class ActorNetwork(nn.Module):
       # (which can be different from just out_features initialized in the constructor if we use mutliple minibatches)
       # (with minibatches we have multiple elements of size out_features)
       std = std.expand_as(output)
+      # the gaussian is left unbounded: samples outside the action space bounds are
+      # clipped by the policy just before stepping the environment (see PPOPolicy.to_env_action).
+      # Squashing the gaussian (with a tanh transform for ex) would give a bounded
+      # distribution, but then the entropy has no closed form and PyTorch cannot compute it.
       gaussian = torch.distributions.Normal(output, std)
-      tanh_gossian = torch.distributions.TransformedDistribution(
-          gaussian,
-          [torch.distributions.transforms.TanhTransform(cache_size=1)],
-      )
-      # Independent wraps the Normal distribution into an object 
+      # Independent wraps the Normal distribution into an object
       # capable of sampling and calculating the log probability "automatically"
       # That means by using .sample() on it we just get a sample of the Normal distribution
       # And when calling .log_prob(v) on it, with v = (X, Y) a vector of action (with 2 components X and Y)
       # It does calculate the sum of log probabilities of both components to get the log probability of v
-      # It's the same as calculating : sum(Normal.log_prob(v)) 
-      # or log(prob(X)) + log(prog(Y)) = log(prob(v))      
-      return torch.distributions.Independent(tanh_gossian, 1)
+      # It's the same as calculating : sum(Normal.log_prob(v))
+      # or log(prob(X)) + log(prog(Y)) = log(prob(v))
+      return torch.distributions.Independent(gaussian, 1)
     # Categorical applies softmax on network output
     # to get a probability distribution from the output vector
     # it also wraps it into an interface that allows for
