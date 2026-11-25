@@ -649,19 +649,36 @@ class WocaRPPO:
         with torch.no_grad():
             if self.config.ppo_continuous:
                 woca_qvalues = self.woca_network(torch.cat((states, actions), dim=1)).squeeze(-1)
-                return woca_qvalues - woca_qvalues.mean()
-            qvalues = self.woca_network(states)
-            # Q_wst is a value, not an advantage. 
-            # So it contains a baseline value + some info about that action
-            # basically : A = Q - V => Q = A + V
-            # to keep distribution Q but recenter it around A 
-            # so it has the scale of an Advantage
-            # we calculate the WEIGHTED SUM FOLLOWING the distribution
-            # (a flat .mean() would loose the information on the difference between states)
-            # and substract it to the value so we keep only the meaningful part of each qvalue
-            probs = self.robust_actor_network.distribution(states).probs
-            baseline = (probs * qvalues).sum(dim=1)
-            return qvalues.gather(1, actions.unsqueeze(1)).squeeze(1) - baseline
+                # same baseline as the discrete branch below, but
+                # Independent(Normal) has no .probs so the expectation over the policy
+                # cannot be written as a finite sum : it is estimated by sampling
+                # nsamples actions per state and averaging Q_wst over them.
+                nsamples = self.config.woca_baseline_samples
+                sampled_actions = self.robust_actor_network.distribution(states).sample((nsamples,))
+                # (nsamples,B,obs) and (nsamples,B,act) flattened to a single (nsamples*B,...) forward
+                repeated_states = states.unsqueeze(0).expand(nsamples, -1, -1)
+                baseline_qvalues = self.woca_network(torch.cat(
+                    (repeated_states.flatten(0, 1), sampled_actions.flatten(0, 1)),
+                    dim=1
+                ))
+                # instead of calculating the weighted sum of qvalues using the distribution
+                # we sample actual qvalues which follow the distribution
+                # so it gives an approximation of the weighted sum (Monte Carlo method)
+                baseline = baseline_qvalues.view(nsamples, states.shape[0]).mean(dim=0)
+                return woca_qvalues - baseline
+            else:
+                qvalues = self.woca_network(states)
+                # Q_wst is a value, not an advantage. 
+                # So it contains a baseline value + some info about that action
+                # basically : A = Q - V => Q = A + V
+                # to keep distribution Q but recenter it around A 
+                # so it has the scale of an Advantage
+                # we calculate the WEIGHTED SUM FOLLOWING the distribution
+                # (a flat .mean() would loose the information on the difference between states)
+                # and substract it to the value so we keep only the meaningful part of each qvalue
+                probs = self.robust_actor_network.distribution(states).probs
+                baseline = (probs * qvalues).sum(dim=1)
+                return qvalues.gather(1, actions.unsqueeze(1)).squeeze(1) - baseline
 
     @Timer.measure("Robust actor network update")
     def _train_robust_actor_network(self, states, actions, old_log_probs, advantages, rewards, next_states, dones, reg_loss, woca_advantage):
