@@ -15,12 +15,22 @@ class EnvFactory:
     @staticmethod
     def wrap(env):
         match env.spec.id:
+            case "roundabout-v0":
+                # The standard route targets the north exit ("nxs").
+                # Reaching its exit lanes counts as completion; waiting for
+                # the time limit on the approach or circle does not.
+                success_condition = lambda *_: (
+                    env.unwrapped.vehicle.lane_index[:2]
+                    in (("nx", "nxs"), ("nxs", "nxr"))
+                    and env.unwrapped.vehicle.on_road
+                    and not env.unwrapped.vehicle.crashed
+                )
             case "merge-v1":
                 success_condition = lambda *_: (
                     env.unwrapped.vehicle.position[0] > 370
                     and not env.unwrapped.vehicle.crashed
                 )
-            case "exit-v0":
+            case "exit-v1":
                 success_condition = lambda obs, reward, term, trunc, info: (
                     info.get("is_success", False)
                     and not env.unwrapped.vehicle.crashed
