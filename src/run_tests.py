@@ -71,6 +71,18 @@ SCENARIOS = {
         "evals": [CLEAN, FGSM_50, FGSM_10, RANDOM_80],
         "references": {"clean": 0.95, "fgsm_50": 0.04, "fgsm_10": None, "random_80": 0.74},
     },
+    "ppo_highway": {
+        "model_type": "ppo",
+        "config": "highway-ppo.json",
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": None, "fgsm_10": None, "random_80": None},
+    },
+    "wocar_ppo_highway": {
+        "model_type": "wocar_ppo",
+        "config": "highway-wocar-ppo.json",
+        "evals": [CLEAN, FGSM_10, RANDOM_80],
+        "references": {"clean": None, "fgsm_10": None, "random_80": None},
+    },
     "ppo_continuous": {
         "model_type": "ppo",
         "config": "ppo_continuous.json",
@@ -81,7 +93,7 @@ SCENARIOS = {
         "model_type": "wocar_ppo",
         "config": "wocar_ppo.json",
         "evals": [CLEAN, FGSM_10, RANDOM_80],
-        "references": {"clean": 0.98, "fgsm_10": 85, "random_80": 90},
+        "references": {"clean": 0.98, "fgsm_10": 0.85, "random_80": 0.90},
     },
     "wocar_ppo_continuous": {
         "model_type": "wocar_ppo",
