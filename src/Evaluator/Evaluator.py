@@ -59,6 +59,7 @@ class Evaluator:
             episode_choices = np.zeros(action_shape) if self.continuous else [0 for i in range(action_shape)]
             episode_steps = 0
             episode_return = 0.0
+            episode_speed = 0.0
             success = False
             state, _ = self.env.reset()
             term = trunc = False
@@ -77,11 +78,15 @@ class Evaluator:
                 episode_steps += 1
                 new_state, reward, term, trunc, info = self.env.step(action)
                 episode_return += reward
+                # highway_env reports the ego vehicle speed in the step info
+                episode_speed += info.get("speed", self.env.unwrapped.vehicle.speed)
                 success = info["success"]
                 state = new_state
                 time.sleep(self.render_delay)
             choices_dict = self.choices_summary(episode_choices, episode_steps)
-            self.record.add_episode(episode_steps, episode_return, success=success, details=str(choices_dict))
+            self.record.add_episode(episode_steps, episode_return, success=success,
+                                    avg_speed=episode_speed / max(episode_steps, 1),
+                                    details=str(choices_dict))
         self.record.add_choices(self.choices_summary(choices, steps))
         self.record.report_final()
         self.env.close()

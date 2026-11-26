@@ -1,4 +1,4 @@
-from Utils.Results import Results
+from Utils.Results import Results, _avg, _std
 
 class EvalResult(Results):
 
@@ -11,10 +11,12 @@ class EvalResult(Results):
         self.attack_bound = attack_bound
         self.seed = seed
         self.successes = []
+        self.episode_speeds = []
 
-    def add_episode(self, length, episode_return, success=False, details=""):
+    def add_episode(self, length, episode_return, success=False, avg_speed=float("nan"), details=""):
         super().add_episode(length, episode_return)
         self.successes.append(bool(success))
+        self.episode_speeds.append(avg_speed)
         self.report_episode(details)
 
     def success_count(self):
@@ -34,13 +36,19 @@ class EvalResult(Results):
         data["crashes"] = self.episode_count - self.success_count()
         data["success_rate"] = self.success_count()/self.episode_count if self.episode_count else float("nan")
         data["choices"] = self.choices_summary
+        data["speed_mean"] = _avg(self.episode_speeds)
+        data["speed_std"] = _std(self.episode_speeds)
         return data
+
+    def series(self):
+        return super().series() + [("Avg speed", self.episode_speeds, "green", True)]
 
     def report_episode(self, details=""):
         marker = "[+]" if self.successes[-1] else "[-]"
         outcome = "Episode ended with success !" if self.successes[-1] else "Driving failed :("
         print(f"{marker} {outcome} - ({self.episode_count}/{self.nb_episodes})"
               f" - return={self.episode_returns[-1]:.3f} - steps={self.episode_lengths[-1]}"
+              f" - avg speed={self.episode_speeds[-1]:.2f}"
               f"{' - ' + details if details else ''}")
 
     def report_lines(self, data):
@@ -48,6 +56,7 @@ class EvalResult(Results):
         lines[0] += f"/{data['planned_episodes']}"
         lines.append(f"Success = {data['successes']} | Crash = {data['crashes']}"
                      f" | Success rate = {data['success_rate']*100:.1f}%")
+        lines.append(f"Avg speed = {data['speed_mean']:.2f} +- {data['speed_std']:.2f}")
         lines.append(f"Model = {data['model']}")
         if data['attack'] != "NeutralAdversarial":
             lines.append(f"Attack = {data['attack']} | Attack bound = {data['attack_bound']}")
