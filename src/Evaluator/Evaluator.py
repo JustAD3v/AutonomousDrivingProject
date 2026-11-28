@@ -31,6 +31,7 @@ class Evaluator:
         env_config = env.spec.kwargs['config'] if env is not None else None
         env_name = env.spec.id if env is not None else "highway-fast-v0"
         self.env = EnvFactory.wrap(gym.make(env_name, config=env_config, render_mode=render_mode))
+        self.render_mode = render_mode #added for, to allow the rendering to stop
         self.device = torch.device("cuda" if (torch.cuda.is_available() and use_gpu) else "cpu")
             
         self.continuous = continuous
@@ -55,6 +56,7 @@ class Evaluator:
         action_shape = self.env.action_space.shape[0] if self.continuous else self.env.action_space.n
         choices = np.zeros(action_shape) if self.continuous else [0 for i in range(action_shape)]
         steps = 0
+        aborted = False
         for i in range(self.nb_episodes):
             episode_choices = np.zeros(action_shape) if self.continuous else [0 for i in range(action_shape)]
             episode_steps = 0
@@ -79,13 +81,36 @@ class Evaluator:
                 episode_return += reward
                 success = info["success"]
                 state = new_state
+
+                if self._window_closed():
+                    aborted = True
+                    break
+
                 time.sleep(self.render_delay)
+
+            if aborted: 
+                print('the visual rendereing has been arborted')
+                break
+
+
             choices_dict = self.choices_summary(episode_choices, episode_steps)
             self.record.add_episode(episode_steps, episode_return, success=success, details=str(choices_dict))
         self.record.add_choices(self.choices_summary(choices, steps))
+
+        if aborted:
+            self.env.close()
+            return self.record
+
+            
         self.record.report_final()
         self.env.close()
         return self.record
+
+    def _window_closed(self):
+        #True if the user closed the render window. it let's eval() stop instead of opening a new window. 
+        # I'm a little concerned about performance becase it checks after each step, but I couldnt think of a better solution.
+        return self.render_mode == "human" and self.env.unwrapped.viewer is None
+
 
     def choices_summary(self, choices, steps):
         if self.continuous:

@@ -30,3 +30,4 @@ typing_extensions==4.16.0
 stable_baselines3==2.9.0
 tensorboard
 pytest
+PyQt6
