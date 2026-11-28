@@ -1,9 +1,8 @@
-"""Which settings each algorithm has, their defaults, and how to save them.
+#This essentially is just one big list of the different parameters for different algorithms. 
+# I'm not super happy of how its constructed, cuz any update made for the actual algorithms would need to have a match in here. 
+# But it was really the only solution I could think of
 
-No Qt code here, so it can be tested on its own. The defaults mirror
-src/Trainers/TrainConfig.py plus the overrides in src/main.py, so update them
-here when those files change.
-"""
+
 import copy
 
 
