@@ -27,7 +27,6 @@ class TerminalPanel(QGroupBox):
         layout.addWidget(self.output)
 
     def append(self, text):
-        """Add a line and keep the view scrolled to the bottom."""
         self.output.append(text)
         scrollbar = self.output.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())

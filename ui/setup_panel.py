@@ -1,4 +1,3 @@
-"""Settings shared by training and evaluation."""
 from PyQt6.QtWidgets import QGroupBox, QFormLayout, QComboBox
 
 from ui.widgets import PathInput
@@ -15,15 +14,15 @@ class SetupPanel(QGroupBox):
         )
         self.config_input = PathInput(
             "Select JSON Config", start=".", file_filter="JSON Files (*.json)",
-            placeholder="Optional JSON config path",
+            placeholder="JSON config path",
         )
 
         form.addRow("Model Type:", self.model_combo)
         form.addRow("JSON Config (--config):", self.config_input)
 
-    def set_config_path(self, path):
-        """Called when the Config tab saves a file."""
+    def apply_config(self, path, model_type):
         self.config_input.set_text(path)
+        self.model_combo.setCurrentText(model_type)
 
     def values(self):
         return {

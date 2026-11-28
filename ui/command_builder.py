@@ -34,7 +34,6 @@ def build_train_command(setup, train):
 
 
 def build_eval_command(setup, evaluation):
-    """setup: SetupPanel.values(), evaluation: EvalTab.values()."""
     cmd = _base_command(setup)
 
     if not evaluation["net_file"]:

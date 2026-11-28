@@ -1,4 +1,3 @@
-"""Main window: wires the setup panel, tabs, terminal panel and subprocess worker together."""
 import os
 
 from PyQt6.QtCore import Qt
@@ -52,8 +51,7 @@ class HighwayGUI(QMainWindow):
         self.train_tab = TrainTab()
         self.eval_tab = EvalTab()
         self.config_tab = ConfigTab()
-        # A saved JSON config is applied automatically to the setup.
-        self.config_tab.config_saved.connect(self.setup_panel.set_config_path)
+        self.config_tab.config_saved.connect(self.setup_panel.apply_config)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.train_tab, "Train")
@@ -87,7 +85,6 @@ class HighwayGUI(QMainWindow):
         return self.worker is not None and self.worker.isRunning()
 
     def update_run_button(self):
-        """The open tab decides what the run button does."""
         tab = self.tabs.currentWidget()
         if tab is self.train_tab:
             text = "Start training"
@@ -122,13 +119,12 @@ class HighwayGUI(QMainWindow):
         self.worker = SubprocessWorker(cmd, cwd=self.current_dir)
         self.worker.log_signal.connect(self.terminal.append)
         self.worker.finished_signal.connect(self.on_process_finished)
-        # finished fires once the thread has really stopped.
         self.worker.finished.connect(self.update_run_button)
         self.worker.start()
 
     def stop_command(self):
         if self.worker:
-            # One press is enough; disable so repeated clicks do nothing.
+            # One press is enough so repeated clicks do nothing.
             self.stop_btn.setEnabled(False)
             self.terminal.append("\n[GUI] Terminating process...")
             self.worker.stop()
@@ -138,7 +134,6 @@ class HighwayGUI(QMainWindow):
         self.stop_btn.setEnabled(False)
 
     def closeEvent(self, event):
-        # Don't leave an evaluation (and its render window) running behind us.
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)

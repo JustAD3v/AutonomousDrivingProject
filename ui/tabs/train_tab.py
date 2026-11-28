@@ -9,7 +9,7 @@ class TrainTab(QWidget):
         form = QFormLayout(self)
 
         self.save_input = PathInput(
-            "Save Model As", mode="save", placeholder="e.g. models/my_model"
+            "Save Model As", mode="save", placeholder="Decide later" #Bring up where to save
         )
         self.seed_input = seed_input()
         self.parallel_chk = QCheckBox("Parallel sample collection (--parallel)")

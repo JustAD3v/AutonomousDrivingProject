@@ -1,13 +1,9 @@
-"""Small widgets shared between the panels."""
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QFileDialog
 
 
 class PathInput(QWidget):
-    """A text field with a Browse button.
-
-    mode: "open" (existing file), "save" (new file) or "dir" (folder).
-    """
+   
 
     def __init__(self, title, mode="open", start="models",
                  file_filter="All Files (*)", text="", placeholder="", parent=None):
@@ -48,7 +44,6 @@ class PathInput(QWidget):
 
 
 def seed_input():
-    """Optional seed field that only accepts whole numbers."""
     edit = QLineEdit()
     edit.setValidator(QIntValidator(0, 999999999))
     edit.setPlaceholderText("Optional")

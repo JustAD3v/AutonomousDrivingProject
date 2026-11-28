@@ -7,32 +7,41 @@ from PyQt6.QtWidgets import (
     QComboBox, QCheckBox, QLineEdit, QPushButton, QLabel, QFileDialog, QMessageBox
 )
 
-from ui.config_schema import SECTIONS, has_key, get_value, to_text, build_config
-from ui.config_templates import TEMPLATES
+from ui.config_schema import (
+    ALGORITHMS, ENV_SECTION, FIELDS,
+    sections, get_value, to_text, build_config,
+)
 
 ENVIRONMENTS = [
     "highway-fast-v0", "highway-v0", "merge-v0",
     "roundabout-v0", "parking-v0", "intersection-v0",
 ]
-ENV_SECTION = "Environment settings"
 
 
 class ConfigTab(QWidget):
-    config_saved = pyqtSignal(str)
+    # path of the saved file, algorithm it was made for
+    config_saved = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self.loaded_file = None  
 
-        top = QHBoxLayout()
-        self.template_combo = QComboBox()
-        self.template_combo.addItems(TEMPLATES.keys())
-        self.template_combo.textActivated.connect(self.load_template)
+        top = QFormLayout()
+        self.algorithm_combo = QComboBox()
+        self.algorithm_combo.addItems(ALGORITHMS.keys())
+        self.algorithm_combo.textActivated.connect(self.show_current)
+
+        button_row = QHBoxLayout()
         load_btn = QPushButton("Load JSON...")
         load_btn.clicked.connect(self.load_file)
-        top.addWidget(QLabel("<b>Template:</b>"))
-        top.addWidget(self.template_combo, 1)
-        top.addWidget(load_btn)
+        reset_btn = QPushButton("Reset to defaults")
+        reset_btn.clicked.connect(self.reset_to_defaults)
+        button_row.addWidget(load_btn)
+        button_row.addWidget(reset_btn)
+
+        top.addRow("<b>Algorithm:</b>", self.algorithm_combo)
+        top.addRow(button_row)
         layout.addLayout(top)
 
         self.source_label = QLabel()
@@ -48,12 +57,20 @@ class ConfigTab(QWidget):
         save_btn.clicked.connect(self.save_config_json_file)
         layout.addWidget(save_btn)
 
-        self.load_template(self.template_combo.currentText())
+        self.show_current()
 
     # ---- loading -----------------------------------------------------------
 
-    def load_template(self, name):
-        self.show_config(TEMPLATES[name], f"Template: {name}")
+    def show_current(self):
+        if self.loaded_file:
+            name, config = self.loaded_file
+            self.show_config(config, f"File: {name}")
+        else:
+            self.show_config({}, "Program defaults")
+
+    def reset_to_defaults(self):
+        self.loaded_file = None
+        self.show_current()
 
     def load_file(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -66,44 +83,31 @@ class ConfigTab(QWidget):
                 config = json.load(f)
             if not isinstance(config, dict):
                 raise ValueError("the file does not contain a JSON object")
-            self.show_config(config, f"File: {os.path.basename(filename)}")
+            name = os.path.basename(filename)
+            self.show_config(config, f"File: {name}")
+            self.loaded_file = (name, config)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load file: {e}")
 
     def show_config(self, config, source):
-        """Rebuild the form, showing only the values this config uses."""
+        algorithm = self.algorithm_combo.currentText()
         content = QWidget()
         content_layout = QVBoxLayout(content)
         fields = {}
         env_group = None
 
-        for title, entries in SECTIONS.items():
-            if title == ENV_SECTION:
-                # Unchecked means "env_config": null (the program's defaults).
-                present = entries
-                custom = config.get("env_config") is not None
-            else:
-                present = [entry for entry in entries if has_key(config, entry[0])]
-            if not present:
-                continue
-
+        for title, keys in sections(algorithm).items():
             group = QGroupBox(title)
             form = QFormLayout(group)
             if title == ENV_SECTION:
                 group.setTitle("Custom environment settings")
                 group.setCheckable(True)
-                group.setChecked(custom)
+                group.setChecked(config.get("env_config") is not None)
                 env_group = group
 
-            for key, kind in present:
-                if has_key(config, key):
-                    value = get_value(config, key)
-                elif title == ENV_SECTION and not custom:
-                    # Prefill so the user has sensible values if they enable it.
-                    value = get_value(TEMPLATES["dqn"], key)
-                else:
-                    continue
-                widget = self.make_widget(kind, value)
+            for key in keys:
+                kind = FIELDS[key][0]
+                widget = self.make_widget(kind, get_value(config, key, algorithm))
                 fields[key] = widget
                 form.addRow(key.split(".")[-1] + ":", widget)
             content_layout.addWidget(group)
@@ -126,8 +130,10 @@ class ConfigTab(QWidget):
             widget.setCurrentText(to_text(value))
         else:
             widget = QLineEdit(to_text(value))
-            if kind == "path":
+            if kind in ("path", "opt_int"):
                 widget.setPlaceholderText("Empty = none")
+            elif kind == "seed":
+                widget.setPlaceholderText("Empty = random")
             elif kind.endswith("_list"):
                 widget.setPlaceholderText("Comma separated, e.g. 256, 256")
         return widget
@@ -167,12 +173,12 @@ class ConfigTab(QWidget):
             with open(filename, "w") as f:
                 json.dump(config_data, f, indent=4)
 
-            self.config_saved.emit(filename)
+            self.config_saved.emit(filename, self.algorithm_combo.currentText())
             QMessageBox.information(
                 self,
                 "Success",
                 f"Config successfully saved to:\n{filename}\n\n"
-                "It has been automatically applied to your run settings.",
+                "The path and model type have been applied under Setup.",
             )
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save file: {e}")
